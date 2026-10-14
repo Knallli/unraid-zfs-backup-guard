@@ -1,0 +1,23 @@
+Menu="Utilities"
+Title="ZFS Backup Guard"
+Icon="shield"
+Tag="shield"
+Markdown="false"
+---
+<?php
+$zbgBase = '/plugins/zfs-backup-guard';
+$zbgTheme = in_array($display['theme'] ?? 'white', ['black', 'gray'], true) ? 'dark' : 'light';
+$zbgConfig = [
+  'api' => "$zbgBase/include/api.php",
+  'csrf' => $var['csrf_token'] ?? '',
+  'theme' => $zbgTheme,
+  'unraidTheme' => $display['theme'] ?? 'white',
+  'locale' => 'de-DE',
+];
+?>
+<link type="text/css" rel="stylesheet" href="<?autov("$zbgBase/assets/app.css")?>">
+<div id="zbg" class="zbg" data-theme="<?=$zbgTheme?>"><div class="zbg-boot"><div class="zbg-spinner"></div></div></div>
+<script>window.ZBG_CONFIG = <?=json_encode($zbgConfig, JSON_UNESCAPED_SLASHES | JSON_HEX_TAG | JSON_HEX_AMP)?>;</script>
+<? foreach (['core', 'components', 'views', 'editor', 'restore', 'main'] as $zbgJs): ?>
+<script src="<?autov("$zbgBase/assets/js/$zbgJs.js")?>"></script>
+<? endforeach; ?>

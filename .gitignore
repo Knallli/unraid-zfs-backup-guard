@@ -1,0 +1,5 @@
+/dist/
+/.dev/
+/.tools/
+/.mcp.json
+/.claude/settings.local.json

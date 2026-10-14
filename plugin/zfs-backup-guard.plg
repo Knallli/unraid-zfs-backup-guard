@@ -1,0 +1,52 @@
+<?xml version='1.0' standalone='yes'?>
+<!DOCTYPE PLUGIN [
+<!ENTITY name "zfs-backup-guard">
+<!ENTITY author "Knallli">
+<!ENTITY version "2026.10.14">
+<!ENTITY md5 "25797cc64c2ef302069bfa6df8b57827">
+<!ENTITY launch "Settings/ZFSBackupGuard">
+<!ENTITY gitURL "https://github.com/Knallli/unraid-zfs-backup-guard">
+<!ENTITY pluginURL "https://raw.githubusercontent.com/Knallli/unraid-zfs-backup-guard/main/plugin/&name;.plg">
+<!ENTITY pkg "&name;-&version;-noarch-1.txz">
+<!ENTITY pkgURL "&gitURL;/releases/download/&version;/&pkg;">
+<!ENTITY plgPATH "/boot/config/plugins/&name;">
+<!ENTITY emhttp "/usr/local/emhttp/plugins/&name;">
+]>
+<PLUGIN name="&name;" author="&author;" version="&version;" launch="&launch;" pluginURL="&pluginURL;" support="&gitURL;/issues" icon="shield" min="6.12.0">
+
+<CHANGES>
+###2026.10.14
+- Phase 1: Übersicht, Snapshot-Browser, Job-Assistent, Zerobyte-Erkennung, Migration aus User Scripts (nur lesend, noch keine Ausführung)
+</CHANGES>
+
+<!-- alte Pakete entfernen -->
+<FILE Run="/bin/bash">
+<INLINE>
+find &plgPATH; -maxdepth 1 -name '&name;-*.txz' ! -name '&pkg;' -delete 2>/dev/null
+true
+</INLINE>
+</FILE>
+
+<FILE Name="&plgPATH;/&pkg;" Run="upgradepkg --install-new">
+<URL>&pkgURL;</URL>
+<MD5>&md5;</MD5>
+</FILE>
+
+<FILE Run="/bin/bash">
+<INLINE>
+chmod 755 &emhttp;/bin/zbg
+ln -sf &emhttp;/bin/zbg /usr/local/sbin/zbg
+echo "ZFS Backup Guard &version; installiert"
+</INLINE>
+</FILE>
+
+<!-- Deinstallation: Konfiguration (jobs.json, settings.json) bleibt erhalten -->
+<FILE Run="/bin/bash" Method="remove">
+<INLINE>
+removepkg &name;
+rm -f /usr/local/sbin/zbg
+rm -rf &emhttp;
+rm -f &plgPATH;/*.txz
+</INLINE>
+</FILE>
+</PLUGIN>

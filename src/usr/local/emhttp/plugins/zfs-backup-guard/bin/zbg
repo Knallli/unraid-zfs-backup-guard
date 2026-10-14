@@ -1,0 +1,52 @@
+#!/usr/bin/php
+<?php
+declare(strict_types=1);
+
+require_once __DIR__ . '/../include/bootstrap.php';
+
+use ZBG\{Cron, History, JobStore, Paths, UserScripts, Zfs};
+
+$cmd = $argv[1] ?? 'help';
+
+try {
+    switch ($cmd) {
+        case 'list':
+            foreach (JobStore::all() as $j) {
+                $st = History::status($j, History::forJob($j['id'], 30));
+                $next = $j['enabled'] ? date('Y-m-d H:i', Cron::next($j['schedule']) ?? 0) : '-';
+                printf("%-20s %-9s %-30s next=%s\n", $j['id'], $st['state'], $j['source']['dataset'], $next);
+            }
+            break;
+        case 'snapshots':
+            foreach (Zfs::snapshots($argv[2] ?? null, true) as $s) {
+                printf("%-8s %s@%s  %s  used=%s\n", $s['kind'], $s['dataset'], $s['snapshot'],
+                    date('Y-m-d H:i', $s['creation']), Paths::human($s['used']));
+            }
+            break;
+        case 'datasets':
+            foreach (Zfs::datasets() as $d) {
+                printf("%-40s %10s  %s\n", $d['name'], Paths::human($d['used']), $d['mountpoint']);
+            }
+            break;
+        case 'import':
+            echo json_encode(UserScripts::scan(), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE), "\n";
+            break;
+        case 'check-age':
+        case 'run':
+            fwrite(STDERR, "$cmd folgt in Phase 2.\n");
+            exit(2);
+        case 'version':
+            echo ZBG\VERSION, "\n";
+            break;
+        default:
+            echo "zbg – ZFS Backup Guard ", ZBG\VERSION, "\n\n",
+                "  zbg list                 Jobs mit Status\n",
+                "  zbg datasets             ZFS-Datasets\n",
+                "  zbg snapshots [dataset]  Snapshots (rekursiv)\n",
+                "  zbg import               User-Script-Backups erkennen (JSON)\n",
+                "  zbg version\n";
+    }
+} catch (Throwable $e) {
+    fwrite(STDERR, 'Fehler: ' . $e->getMessage() . "\n");
+    exit(1);
+}

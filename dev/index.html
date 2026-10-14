@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ZFS Backup Guard – Vorschau</title>
+  <link rel="stylesheet" href="/assets/app.css">
+  <style>
+    /* grobe Nachbildung des Unraid-Rahmens, um Stil-Isolation zu prüfen */
+    body { margin: 0; background: #f2f2f2; font: 13px/1.3 arial, sans-serif; color: #333; }
+    body.dark { background: #1c1b1b; color: #ddd; }
+    #unraid-header { height: 56px; overflow: hidden; background: #1c1c1c; color: #f2f2f2; display: flex; align-items: center; padding: 0 24px; gap: 24px; font-size: 14px; }
+    #unraid-header b { color: #ff8c2f; font-size: 18px; }
+    #unraid-content { max-width: 1440px; margin: 0 auto; padding: 18px; }
+    .devbar { position: fixed; left: 10px; bottom: 10px; z-index: 99999; display: flex; gap: 6px; }
+    .devbar button { font: 12px arial; padding: 6px 10px; border-radius: 6px; border: 1px solid #999; background: #fff; cursor: pointer; }
+    /* Unraid-Basisregeln, die durchschlagen könnten */
+    button, input[type=button] { text-transform: uppercase; letter-spacing: 1.8px; margin: 10px 12px 10px 0; min-width: 86px; }
+    h2 { font-size: 1.3rem; text-transform: uppercase; }
+  </style>
+</head>
+<body>
+  <div id="unraid-header"><b>UNRAID</b><span>DASHBOARD</span><span>MAIN</span><span>SHARES</span><span>DOCKER</span><span style="color:#ff8c2f">UTILITIES</span></div>
+  <div id="unraid-content">
+    <div id="zbg" class="zbg" data-theme="light"><div class="zbg-boot"><div class="zbg-spinner"></div></div></div>
+  </div>
+  <div class="devbar"><button onclick="localStorage.removeItem('zbg-theme');location.reload()">Reset</button></div>
+  <script>window.ZBG_CONFIG = { api: '/api', csrf: 'dev', theme: 'light', unraidTheme: 'white', locale: 'de-DE' };</script>
+  <script src="/assets/js/core.js"></script>
+  <script src="/dev/mock.js"></script>
+  <script src="/assets/js/components.js"></script>
+  <script src="/assets/js/views.js"></script>
+  <script src="/assets/js/editor.js"></script>
+  <script src="/assets/js/restore.js"></script>
+  <script src="/assets/js/main.js"></script>
+</body>
+</html>
