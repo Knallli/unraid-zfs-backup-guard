@@ -3,6 +3,8 @@ declare(strict_types=1);
 
 /*
  * JSON-API der Weboberfläche. Nur POST, Unraid-csrf_token wird zusätzlich selbst geprüft.
+ * Unraids auto_prepend_file prüft das Token bereits und entfernt es aus POST/Header;
+ * das geprüfte Token bleibt dabei in $csrf_token erhalten.
  * Body: action=<name>&payload=<json>&csrf_token=<token>
  */
 
@@ -23,7 +25,8 @@ if (($_SERVER['REQUEST_METHOD'] ?? '') !== 'POST') {
 }
 
 $var = @parse_ini_file('/var/local/emhttp/var.ini') ?: [];
-if (empty($var['csrf_token']) || !hash_equals((string)$var['csrf_token'], (string)($_POST['csrf_token'] ?? ''))) {
+$submittedToken = $_POST['csrf_token'] ?? $_SERVER['HTTP_X_CSRF_TOKEN'] ?? ($csrf_token ?? '');
+if (empty($var['csrf_token']) || !is_string($submittedToken) || !hash_equals((string)$var['csrf_token'], $submittedToken)) {
     zbg_reply(403, ['ok' => false, 'error' => 'Ungültiges CSRF-Token – Seite neu laden']);
 }
 

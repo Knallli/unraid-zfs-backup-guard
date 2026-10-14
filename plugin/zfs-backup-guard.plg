@@ -3,7 +3,7 @@
 <!ENTITY name "zfs-backup-guard">
 <!ENTITY author "Knallli">
 <!ENTITY version "2026.10.14">
-<!ENTITY md5 "25797cc64c2ef302069bfa6df8b57827">
+<!ENTITY md5 "7e4ea3cdbf509ccd022b2f58ad2e2f8f">
 <!ENTITY launch "Settings/ZFSBackupGuard">
 <!ENTITY gitURL "https://github.com/Knallli/unraid-zfs-backup-guard">
 <!ENTITY pluginURL "https://raw.githubusercontent.com/Knallli/unraid-zfs-backup-guard/main/plugin/&name;.plg">
@@ -17,6 +17,7 @@
 <CHANGES>
 ###2026.10.14
 - Phase 1: Übersicht, Snapshot-Browser, Job-Assistent, Zerobyte-Erkennung, Migration aus User Scripts (nur lesend, noch keine Ausführung)
+- CSRF-Prüfung berücksichtigt das bereits von Unraid geprüfte Token, nachdem Unraid POST/Header bereinigt hat.
 </CHANGES>
 
 <!-- alte Pakete entfernen -->
