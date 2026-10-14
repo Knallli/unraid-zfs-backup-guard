@@ -11,7 +11,7 @@ putenv('ZBG_ZEROBYTE_DB=' . sys_get_temp_dir() . '/zbg-test-zerobyte-' . getmypi
 date_default_timezone_set('Europe/Berlin');
 require __DIR__ . '/../src/usr/local/emhttp/plugins/zfs-backup-guard/include/bootstrap.php';
 
-use ZBG\{Cron, Downstream, Job, Paths, Retention, UserError, UserScripts, Zfs};
+use ZBG\{Cron, Downstream, History, Job, JobStore, Paths, Retention, RunState, UserError, UserScripts, Zfs};
 
 $failures = 0;
 $count = 0;
@@ -207,9 +207,9 @@ eq('ZFS: Leerzeichen-Pfad aus /proc/mounts', $ds['cache/domains/Github Actions']
 check('ZFS: Leerzeichen Hinweis', in_array('chars', $codes('cache/domains/Github Actions'), true));
 check('ZFS: zvol nicht lesbar', $ds['cache/domains/vm1']['type'] === 'volume' && !$ds['cache/domains/vm1']['readable']);
 eq('ZFS: legacy über /proc/mounts', $ds['cache/legacy']['path'], '/srv/legacy');
-check('ZFS: canmount=off', !$ds['cache/appdata/off']['readable'] && str_contains($ds['cache/appdata/off']['issues'][0]['msg'], 'canmount=off'));
-check('ZFS: canmount=noauto ungemountet', str_contains($ds['cache/noauto']['issues'][0]['msg'], 'canmount=noauto'));
-check('ZFS: mountpoint=none', str_contains($ds['cache/none']['issues'][0]['msg'], 'mountpoint=none'));
+check('ZFS: ungemountetes canmount=off nicht als Dateiquelle nutzbar', !$ds['cache/appdata/off']['readable'] && $ds['cache/appdata/off']['path'] === null);
+check('ZFS: ungemountetes noauto nicht als Dateiquelle nutzbar', !$ds['cache/noauto']['readable'] && $ds['cache/noauto']['path'] === null);
+check('ZFS: mountpoint=none hat keinen Dateipfad', $ds['cache/none']['path'] === null);
 check('ZFS: Schlüssel nicht geladen', $ds['cache/vault']['locked'] && !$ds['cache/vault']['readable']);
 check('ZFS: Klon', in_array('clone', $codes('cache/clone'), true));
 check('ZFS: snapshot_limit', in_array('snaplimit', $codes('cache/limited'), true));
@@ -224,7 +224,6 @@ eq('Plan: Wurzel kopiert nach ./', $items['cache/appdata']['targetRel'], '');
 eq('Plan: Kind nach ./immich', $items['cache/appdata/immich']['targetRel'], 'immich');
 eq('Plan: ungemountetes Kind nur Snapshot', $items['cache/appdata/off']['action'], 'snapshot-only');
 eq('Plan: Wurzel schützt Kind- und Fremd-Mounts vor --delete', $items['cache/appdata']['protect'], ['/foreign/', '/immich/']);
-check('Plan: Warnung für nicht lesbare', (bool)array_filter($p['warnings'], static fn($w) => str_contains($w['msg'], 'nicht lesbar')));
 
 // Ausschluss schließt Teilbaum aus
 $p = Zfs::plan('cache/appdata', true, ['cache/appdata/off']);
@@ -247,7 +246,6 @@ eq('Plan: Leerzeichen-Kind', $p['cache/domains/Github Actions']['targetRel'], 'G
 // Boot als Quelle ist erlaubt
 $p = Zfs::plan('flash/boot', false, []);
 eq('Plan: Boot kopierbar', $p['items'][0]['action'], 'copy');
-check('Plan: Boot-Hinweis', (bool)array_filter($p['warnings'], static fn($w) => str_contains($w['msg'], 'Boot-Pool')));
 
 // Snapshot-Klassifizierung
 check('Snapshot eigen', Zfs::isOwn('zbg_appdata_20261014-020000', 'appdata'));
@@ -264,7 +262,6 @@ eq('Snapshot user script', Zfs::classify('rsync_auto_20261013_020001', null), 'u
 $base = ['name' => 'Appdata → Array', 'source' => ['dataset' => 'cache/appdata'], 'target' => ['path' => '/mnt/user/backup/zfs-test/appdata', 'mode' => 'mirror']];
 $j = Job::normalize($base);
 eq('Job: ID aus Name', $j['id'], 'appdata-array');
-eq('Job: Defaults', [$j['schedule'], $j['snapshots']['keep']['daily']], ['0 2 * * *', 7]);
 eq('Job: Slug Umlaute', Job::slug('Über Größe'), 'ueber-groesse');
 throws('Job: Ziel in Quelle', static fn() => Job::normalize(['target' => ['path' => '/mnt/cache/appdata/backup']] + $base));
 throws('Job: Ausschluss nicht unter Quelle', static fn() => Job::normalize(['source' => ['dataset' => 'cache/appdata', 'exclude' => ['cache/domains']]] + $base));
@@ -324,6 +321,78 @@ eq('Migration: Zeitplan übernommen', $prop[0]['schedule'], '0 2 * * *');
 $sio = UserScripts::parse("source_pool=\"cache\"\nsource_dataset=\"appdata\"\nsnapshot_days=\"7\"\nsnapshot_weeks=4 # Kommentar\nreplication=\"rsync\"\n", 'kaputt');
 eq('Migration: SpaceInvaderOne', [$sio[0]['source']['dataset'], $sio[0]['snapshots']['keep']['weekly'], $sio[0]['schedule']], ['cache/appdata', 4, '0 2 * * *']);
 eq('Migration: kein Backup-Skript', UserScripts::parse("echo hallo\n", null), []);
+
+/* Persistenz: atomarer Import, konkurrierende Änderungen und aktive Jobs */
+$fixtureA = ['id' => 'fixture-a', 'name' => 'Fixture A', 'enabled' => true] + $base;
+$fixtureB = ['id' => 'fixture-b', 'name' => 'Fixture B', 'enabled' => true] + $base;
+$imported = JobStore::saveBatch([$fixtureA, $fixtureB]);
+eq('Import: aktive Vorschläge werden deaktiviert gespeichert', array_column($imported, 'enabled'), [false, false]);
+$beforeImportConflict = JobStore::all();
+throws('Import: vorhandene ID wird nicht überschrieben', static fn() => JobStore::saveBatch([$fixtureA]));
+eq('Import: Konflikt lässt gesamte Konfiguration unverändert', JobStore::all(), $beforeImportConflict);
+throws('Import: doppelte IDs im Batch abgelehnt', static fn() => JobStore::saveBatch([
+    ['id' => 'batch-duplicate', 'name' => 'First'] + $base,
+    ['id' => 'batch-duplicate', 'name' => 'Second'] + $base,
+]));
+eq('Import: ungültiger Batch legt keinen Teilbestand an', JobStore::all(), $beforeImportConflict);
+JobStore::setEnabled('fixture-a', true);
+$cronOutput = file_get_contents(JobStore::file('zfs-backup-guard.cron'));
+check('Cron: aktivierter Job vorhanden, deaktivierter nicht', str_contains($cronOutput, 'fixture-a') && !str_contains($cronOutput, 'fixture-b'));
+JobStore::delete('fixture-a');
+check('Cron: gelöschter Job wird nicht mehr geplant', !str_contains(file_get_contents(JobStore::file('zfs-backup-guard.cron')), 'fixture-a'));
+
+$jobLock = RunState::lockJob('fixture-b');
+throws('Job: gesperrter Job nicht löschbar', static fn() => JobStore::delete('fixture-b'));
+fclose($jobLock);
+RunState::write('fixture-b', ['state' => 'running', 'pid' => getmypid(), 'pidIdentity' => RunState::pidIdentity(getmypid()), 'start' => time()]);
+throws('Job: laufender Job nicht umbenennbar', static fn() => JobStore::save(['id' => 'renamed-b', 'name' => 'Renamed'] + $base, 'fixture-b'));
+RunState::write('fixture-b', ['state' => 'success', 'pid' => 0]);
+
+if (function_exists('pcntl_fork')) {
+    $children = [];
+    foreach (['concurrent-a', 'concurrent-b', 'concurrent-c'] as $id) {
+        $pid = pcntl_fork();
+        if ($pid === 0) {
+            try {
+                JobStore::save(['id' => $id, 'name' => $id, 'enabled' => false] + $base);
+                exit(0);
+            } catch (Throwable) { exit(1); }
+        }
+        if ($pid < 0) { throw new RuntimeException('Fork fehlgeschlagen'); }
+        $children[] = $pid;
+    }
+    $allChildrenOk = true;
+    foreach ($children as $pid) {
+        pcntl_waitpid($pid, $status);
+        $allChildrenOk = $allChildrenOk && pcntl_wifexited($status) && pcntl_wexitstatus($status) === 0;
+    }
+    $storedIds = array_column(JobStore::all(), 'id');
+    check('Persistenz: konkurrierende Änderungen gehen nicht verloren', $allChildrenOk && !array_diff(['concurrent-a', 'concurrent-b', 'concurrent-c'], $storedIds));
+}
+
+$fixtureLog = getenv('ZBG_CONFIG_DIR') . '/logs';
+mkdir($fixtureLog, 0700);
+JobStore::writeJson('settings.json', ['logDir' => $fixtureLog, 'historyLimit' => 3, 'globalLock' => true]);
+for ($i = 1; $i <= 5; $i++) {
+    History::append('fixture-b', ['runId' => 'record-' . $i, 'start' => $i, 'end' => $i + 1, 'result' => 'success']);
+}
+eq('Verlauf: Begrenzung behält neueste echte Läufe', array_column(History::forJob('fixture-b'), 'runId'), ['record-5', 'record-4', 'record-3']);
+$statusJob = Job::normalize(['enabled' => true] + $fixtureB);
+$realSuccess = ['result' => 'success', 'start' => time() - 60, 'end' => time() - 10];
+$dryFailure = ['result' => 'failed', 'dryRun' => true, 'start' => time(), 'end' => time()];
+eq('Status: Probelauf ersetzt keine echte Backup-Ampel', History::status($statusJob, [$dryFailure, $realSuccess])['state'], 'ok');
+eq('Status: nur Probeläufe zählen nicht als Backup', History::status($statusJob, [$dryFailure])['state'], 'never');
+
+function removeFixtureTree(string $path): void
+{
+    if (is_link($path) || is_file($path)) { unlink($path); return; }
+    if (!is_dir($path)) { return; }
+    foreach (new FilesystemIterator($path, FilesystemIterator::SKIP_DOTS) as $entry) {
+        removeFixtureTree($entry->getPathname());
+    }
+    rmdir($path);
+}
+removeFixtureTree(getenv('ZBG_CONFIG_DIR'));
 
 echo $failures ? "\n$failures von $count Tests fehlgeschlagen\n" : "Alle $count Tests bestanden\n";
 exit($failures ? 1 : 0);

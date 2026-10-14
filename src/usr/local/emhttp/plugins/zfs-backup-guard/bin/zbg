@@ -4,9 +4,24 @@ declare(strict_types=1);
 
 require_once __DIR__ . '/../include/bootstrap.php';
 
-use ZBG\{Cron, History, JobStore, Paths, UserScripts, Zfs};
+use ZBG\{Api, Cron, History, JobStore, Paths, Restore, Runner, Schedule, UserError, UserScripts, Versions, Zfs};
 
 $cmd = $argv[1] ?? 'help';
+
+function zbg_json(mixed $value): void
+{
+    echo json_encode($value, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR), "\n";
+}
+
+function zbg_arg(int $index, string $name): string
+{
+    global $argv;
+    $value = $argv[$index] ?? '';
+    if ($value === '' || str_starts_with($value, '--')) {
+        throw new UserError("Argument $name fehlt");
+    }
+    return $value;
+}
 
 try {
     switch ($cmd) {
@@ -29,22 +44,86 @@ try {
             }
             break;
         case 'import':
-            echo json_encode(UserScripts::scan(), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE), "\n";
+            zbg_json(isset($argv[2]) ? Api::dispatch('migration.import', ['script' => $argv[2]]) : UserScripts::scan());
+            break;
+        case 'run':
+        case 'worker':
+            $job = JobStore::get(zbg_arg(2, 'Job-ID'));
+            if (in_array('--scheduled', $argv, true) && !$job['enabled']) {
+                break;
+            }
+            $result = Runner::run($job, in_array('--dry-run', $argv, true), in_array('--verify', $argv, true) || !empty($job['verify']), in_array('--scheduled', $argv, true));
+            zbg_json($result);
+            exit(in_array($result['result'] ?? $result['state'] ?? '', ['failed', 'cancelled'], true) ? 1 : 0);
+        case 'start':
+            zbg_json(Runner::start(zbg_arg(2, 'Job-ID'), in_array('--dry-run', $argv, true), in_array('--verify', $argv, true)));
+            break;
+        case 'status':
+            zbg_json(Runner::status($argv[2] ?? null));
+            break;
+        case 'cancel':
+            zbg_json(Runner::cancel(zbg_arg(2, 'Job-ID')));
+            break;
+        case 'cancel-all':
+            Runner::cancelAll();
+            break;
+        case 'log':
+            zbg_json(Runner::log(zbg_arg(2, 'Job-ID'), $argv[3] ?? null));
             break;
         case 'check-age':
-        case 'run':
-            fwrite(STDERR, "$cmd folgt in Phase 2.\n");
-            exit(2);
+            zbg_json(Runner::checkAge());
+            break;
+        case 'schedule':
+            Schedule::sync();
+            break;
+        case 'schedule-remove':
+            Schedule::remove();
+            break;
+        case 'versions':
+            zbg_json(Versions::list(JobStore::get(zbg_arg(2, 'Job-ID'))));
+            break;
+        case 'restore':
+            zbg_json(Restore::copy(['dataset' => zbg_arg(2, 'Dataset'), 'snapshot' => zbg_arg(3, 'Snapshot'),
+                'paths' => [zbg_arg(4, 'Pfad')], 'target' => $argv[5] ?? null]));
+            break;
+        case 'restore-version':
+            zbg_json(Restore::copy(['job' => zbg_arg(2, 'Job-ID'), 'version' => zbg_arg(3, 'Version'),
+                'paths' => [zbg_arg(4, 'Pfad')], 'target' => $argv[5] ?? null]));
+            break;
+        case 'clone':
+            zbg_json(Restore::clone(zbg_arg(2, 'Dataset'), zbg_arg(3, 'Snapshot')));
+            break;
+        case 'clones':
+            zbg_json(Restore::clones());
+            break;
+        case 'clone-remove':
+            Restore::removeClone(zbg_arg(2, 'Klon-Dataset'));
+            break;
+        case 'rollback-command':
+            zbg_json(Restore::rollbackCommand(zbg_arg(2, 'Dataset'), zbg_arg(3, 'Snapshot')));
+            break;
         case 'version':
             echo ZBG\VERSION, "\n";
             break;
-        default:
+        case 'help':
             echo "zbg – ZFS Backup Guard ", ZBG\VERSION, "\n\n",
-                "  zbg list                 Jobs mit Status\n",
-                "  zbg datasets             ZFS-Datasets\n",
-                "  zbg snapshots [dataset]  Snapshots (rekursiv)\n",
-                "  zbg import               User-Script-Backups erkennen (JSON)\n",
+                "  zbg list                                 Jobs mit Status\n",
+                "  zbg datasets                             ZFS-Datasets\n",
+                "  zbg snapshots [dataset]                  Snapshots (rekursiv)\n",
+                "  zbg import [script-name]                 Erkennen / deaktiviert importieren\n",
+                "  zbg run <id> [--dry-run] [--verify]       Im Vordergrund ausführen\n",
+                "  zbg start <id> [--dry-run] [--verify]     Im Hintergrund starten\n",
+                "  zbg status [id] | cancel <id> | cancel-all\n",
+                "  zbg log <id> [run-id] | check-age | schedule\n",
+                "  zbg versions <id>\n",
+                "  zbg restore <dataset> <snapshot> <path> [new-target]\n",
+                "  zbg restore-version <id> <version> <path> [new-target]\n",
+                "  zbg clone <dataset> <snapshot> | clones | clone-remove <dataset>\n",
+                "  zbg rollback-command <dataset> <snapshot>  Nur Befehl anzeigen\n",
                 "  zbg version\n";
+            break;
+        default:
+            throw new UserError("Unbekannter Befehl: $cmd");
     }
 } catch (Throwable $e) {
     fwrite(STDERR, 'Fehler: ' . $e->getMessage() . "\n");

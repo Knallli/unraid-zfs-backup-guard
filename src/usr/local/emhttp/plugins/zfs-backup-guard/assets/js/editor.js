@@ -18,9 +18,10 @@
     id: '',
     name: '',
     enabled: true,
+    verify: false,
     source: { dataset: '', recursive: true, exclude: [] },
     method: 'rsync',
-    target: { path: '', mode: 'versioned', dataset: '', ssh: null },
+    target: { path: '', mode: 'versioned', dataset: '', ssh: null, adoptExisting: false },
     schedule: '0 2 * * *',
     snapshots: { keep: { hourly: 0, daily: 7, weekly: 4, monthly: 3, yearly: 0 } },
     versions: { keep: { daily: 14, weekly: 8, monthly: 6 } },
@@ -365,14 +366,14 @@
           ${
             down
               ? card({ act: 'edMode', value: 'mirror', on: t.mode === 'mirror', icon: 'copy', title: 'Spiegel', tag: `empfohlen mit ${down.tool}`, tone: 'ok', text: `Stabiler Pfad mit dem aktuellen Stand. Die Versionierung übernimmt ${esc(down.tool)} („${esc(down.name)}“, ${esc(fmt.retention(down.retention))}). Ältere Stände gibt es zusätzlich als lokale ZFS-Snapshots.` }) +
-                card({ act: 'edMode', value: 'versioned', on: t.mode === 'versioned', icon: 'history', title: 'Versioniert', tag: 'zusätzlich lokal', text: `Versionen auch auf dem Array. ${esc(down.tool)} sichert dann nur <code>current/</code>, die Include-Pfade müssen angepasst werden.` })
+                card({ act: 'edMode', value: 'versioned', on: t.mode === 'versioned', icon: 'history', title: 'Versioniert', tag: 'zusätzlich lokal', text: `Versionen auch auf dem Array. Für den neuesten Stand kann ${esc(down.tool)} den Pfad <code>latest/</code> sichern; Include-Pfade und Symlink-Behandlung im nachgelagerten Backup selbst prüfen.` })
               : card({ act: 'edMode', value: 'versioned', on: t.mode === 'versioned', icon: 'history', title: 'Versioniert', tag: 'empfohlen', tone: 'ok', text: 'Jeder Lauf wird ein eigener Ordner. Unveränderte Dateien sind Hardlinks und kosten kaum Platz. Gelöschte oder verschlüsselte Dateien bleiben in älteren Versionen erhalten.' }) +
                 card({ act: 'edMode', value: 'mirror', on: t.mode === 'mirror', icon: 'copy', title: 'Spiegel', tag: '--delete', tone: 'warn', text: 'Genau eine Kopie. Löschungen und Ransomware-Schäden landen beim nächsten Lauf auch im Backup, sofern kein nachgelagertes Backup wie Zerobyte die Versionen hält.' })
           }
         </div>
         <label class="zbg-field"><span>Zielordner</span><input class="zbg-input mono big" data-bind="target.path" value="${esc(t.path)}" placeholder="/mnt/user/backup/zfs/${esc(leaf)}" spellcheck="false"></label>
         <div class="chips">${suggestions.map((s) => `<button type="button" class="chip" data-act="edSuggest" data-value="${esc(s)}">${esc(s)}</button>`).join('')}</div>
-        ${t.mode === 'versioned' ? `<div class="ed-tree-prev mono"><b>${esc(t.path || '/mnt/…')}/</b><span>├─ current/ <i>⇢ immer der neueste Stand, stabiler Pfad (z. B. für Zerobyte)</i></span><span>└─ versions/</span><span>&nbsp;&nbsp;&nbsp;├─ 2026-10-12_020000/ <i>⇢ Hardlinks auf unveränderte Dateien</i></span><span>&nbsp;&nbsp;&nbsp;└─ 2026-10-13_020000/</span></div>` : ''}
+        ${t.mode === 'versioned' ? `<div class="ed-tree-prev mono"><b>${esc(t.path || '/mnt/…')}/</b><span>├─ latest <i>⇢ Symlink auf die neueste abgeschlossene Version</i></span><span>├─ 2026-10-12_020000/ <i>⇢ Hardlinks auf unveränderte Dateien</i></span><span>└─ 2026-10-13_020000/</span></div>` : `<div class="zbg-callout tone-warn">${icon('alert')}<div><b>Spiegel kann Dateien löschen.</b> Ein nichtleeres, noch nicht diesem Job zugeordnetes Ziel wird ohne ausdrückliche Übernahme abgelehnt. Prüfe den vollständigen Zielpfad, vorhandene Daten und Excludes.</div></div><label class="zbg-field row"><input type="checkbox" data-bind="target.adoptExisting"${t.adoptExisting ? ' checked' : ''}><span>Vorhandenen Spiegel übernehmen; rsync kann Dateien löschen</span></label>`}
         <div class="ed-checks" data-region="edCheck">${checkHtml()}</div>`
           : `<label class="zbg-field"><span>Ziel-Dataset</span><input class="zbg-input mono big" data-bind="target.dataset" value="${esc(t.dataset)}" placeholder="${esc((otherPools[0] || 'backup') + '/zbg/' + leaf)}" list="ed-ds-list" spellcheck="false"></label>
         <datalist id="ed-ds-list">${(Z.state.datasets || []).filter((d) => !d.name.startsWith(j.source.dataset)).map((d) => `<option value="${esc(d.name)}/${esc(leaf)}">`).join('')}</datalist>
@@ -387,7 +388,7 @@
             <label class="zbg-field"><span>Benutzer</span><input class="zbg-input mono" data-bind="target.ssh.user" value="${esc(t.ssh.user)}"></label>
             <label class="zbg-field"><span>Port</span><input class="zbg-input" type="number" data-bind="target.ssh.port" value="${esc(t.ssh.port)}"></label>
             <label class="zbg-field"><span>Schlüsseldatei</span><input class="zbg-input mono" data-bind="target.ssh.key" data-nullable value="${esc(t.ssh.key || '')}" placeholder="/root/.ssh/id_ed25519"></label>
-          </div><small class="muted">Der Schlüssel wird nur als Pfad referenziert und nie gespeichert oder angezeigt.</small>`
+          </div><label class="zbg-field mt"><span>Known-Hosts-Datei <small>(optional)</small></span><input class="zbg-input mono" data-bind="target.ssh.knownHosts" data-nullable value="${esc(t.ssh.knownHosts || '')}" placeholder="/root/.ssh/known_hosts"></label><small class="muted">SSH verwendet strikte Hostschlüsselprüfung. Der Zielschlüssel muss vorab vertrauenswürdig in known_hosts hinterlegt sein. Private Schlüssel werden nur über ihren Pfad referenziert, ihr Inhalt wird nicht gespeichert.</small>`
             : `<small class="muted">Für eine dritte Kopie außer Haus (3-2-1), z. B. auf einen zweiten Server oder eine Hetzner Storage Box.</small>`
         }
       </div>`;
@@ -397,10 +398,15 @@
   };
   Z.actions.edMethod = (el) => {
     ed.job.method = el.dataset.value;
+    if (ed.job.method !== 'rsync') {
+      ed.job.target.adoptExisting = false;
+      ed.job.verify = false;
+    }
     renderStep();
   };
   Z.actions.edMode = (el) => {
     ed.job.target.mode = el.dataset.value;
+    if (ed.job.target.mode !== 'mirror') ed.job.target.adoptExisting = false;
     renderStep();
   };
   Z.actions.edSuggest = (el) => {
@@ -409,7 +415,7 @@
     renderStep();
   };
   Z.actions.edSsh = (el) => {
-    ed.job.target.ssh = el.checked ? { host: '', user: 'root', port: 22, key: '/root/.ssh/id_ed25519' } : null;
+    ed.job.target.ssh = el.checked ? { host: '', user: 'root', port: 22, key: '/root/.ssh/id_ed25519', knownHosts: null } : null;
     renderStep();
   };
 
@@ -471,7 +477,7 @@
         <input class="zbg-input mono big cron" data-bind="schedule" data-refresh="edCron" value="${esc(j.schedule)}" spellcheck="false"></label>
         <div data-region="edCron">${cronPreview()}</div>
       </div>
-      <div class="zbg-callout tone-info">${icon('info')}<div>Der Zeitplan wird als <code>/boot/config/plugins/zfs-backup-guard/zfs-backup-guard.cron</code> registriert. Das ist der Standardweg für Unraid-Plugins (aktiv ab Phase 3).</div></div>`;
+      <div class="zbg-callout tone-info">${icon('info')}<div>Aktive Zeitpläne werden als <code>/boot/config/plugins/zfs-backup-guard/zfs-backup-guard.cron</code> registriert. Pausierte Jobs bleiben manuell ausführbar.</div></div>`;
   };
   function cronPreview() {
     const s = ed.job.schedule;
@@ -669,6 +675,7 @@
         <label class="zbg-field"><span>Healthchecks.io-URL <small>(optional)</small></span><input class="zbg-input mono" data-bind="healthcheckUrl" data-nullable value="${esc(j.healthcheckUrl || '')}" placeholder="https://hc-ping.com/…">
           <small class="muted">Wird mit <code>/start</code>, bei Erfolg und mit <code>/fail</code> angepingt.</small></label>
       </div>
+      ${j.method === 'rsync' ? `<div class="ed-sub row between"><div><b>Prüfsummen nach der Kopie vergleichen</b><br><small class="muted">Liest Quelle und Ziel erneut. Abweichungen werden im Verlauf gemeldet; bei Fehlern wird nicht aufgeräumt.</small></div>${ui.toggle('verify', j.verify)}</div>` : ''}
       <div class="ed-sub row between"><div><b>Zeitplan aktiv</b><br><small class="muted">Pausierte Jobs laufen nur manuell.</small></div>${ui.toggle('enabled', j.enabled)}</div>`;
   };
   function ageHint() {
@@ -719,6 +726,7 @@
         ${row('box', 'Konsistenz', j.consistency.mode === 'crash' ? 'Crash-konsistent' : `${j.consistency.mode === 'pause' ? 'Pausieren' : 'Stoppen'}: ${esc(j.consistency.containers.join(', ') || 'keine Container gewählt')}`, 4)}
         ${down ? row('cloud', 'Weitersicherung (3-2-1)', `${esc(down.tool)} „${esc(down.name)}“ · ${esc(Z.cron.describe(down.cron))} <span class="${chain.tone === 'ok' ? 'muted' : 'err'}">${chain.tone === 'ok' ? '✓ Zeitfenster passt' : '⚠ Zeitfenster knapp'}</span>`, 1) : ''}
         ${row('bell', 'Überwachung', `${{ all: 'Jeder Lauf', errors: 'Nur Fehler', none: 'Keine' }[j.notify]} · Warnung nach ${j.maxAgeHours} h${j.healthcheckUrl ? ' · Healthchecks' : ''}`, 5)}
+        ${j.method === 'rsync' ? row('shieldCheck', 'Prüfsummen', j.verify ? 'Nach jedem Backup prüfen' : 'Nur bei manuell gestarteter Prüfung', 5) : ''}
       </div>
       <div class="sum-flow"><h4 class="ed-h4">Ablauf eines Laufs</h4><ol>
         <li>Vorprüfung: Sperre, Pool ONLINE, Ziel gemountet, freier Platz</li>
@@ -726,6 +734,7 @@
         <li>Snapshot <code>${esc(j.source.dataset)}@zbg_${esc(j.id)}_JJJJMMTT-HHMMSS</code>${j.source.recursive ? ' (rekursiv, atomar)' : ''}</li>
         ${j.consistency.mode !== 'crash' && j.consistency.containers.length ? '<li>Container sofort wieder starten</li>' : ''}
         <li>${j.method === 'zfs' ? 'zfs send -I → receive -s -u' : j.target.mode === 'versioned' ? 'rsync --link-dest in neuen Versionsordner' : 'rsync --delete in den Spiegel'}</li>
+        ${j.method === 'rsync' && j.verify ? '<li>Prüfsummen mit dem Quell-Snapshot vergleichen</li>' : ''}
         <li>Aufräumen nach Aufbewahrungsregeln (nur eigene Snapshots, nur bei Erfolg)</li>
         <li>Verlauf, ${j.notify === 'none' ? '' : 'Benachrichtigung, '}${j.healthcheckUrl ? 'Healthcheck-Ping, ' : ''}fertig</li>
         ${down ? `<li>Danach sichert ${esc(down.tool)} („${esc(down.name)}“, ${esc(Z.cron.describe(down.cron))}) das Ziel außer Haus</li>` : ''}

@@ -2,8 +2,8 @@
 <!DOCTYPE PLUGIN [
 <!ENTITY name "zfs-backup-guard">
 <!ENTITY author "Knallli">
-<!ENTITY version "2026.10.14">
-<!ENTITY md5 "7e4ea3cdbf509ccd022b2f58ad2e2f8f">
+<!ENTITY version "2026.10.14a">
+<!ENTITY md5 "22ef75f9629c49253402226c8c0e051c">
 <!ENTITY launch "Settings/ZFSBackupGuard">
 <!ENTITY gitURL "https://github.com/Knallli/unraid-zfs-backup-guard">
 <!ENTITY pluginURL "https://raw.githubusercontent.com/Knallli/unraid-zfs-backup-guard/main/plugin/&name;.plg">
@@ -15,6 +15,14 @@
 <PLUGIN name="&name;" author="&author;" version="&version;" launch="&launch;" pluginURL="&pluginURL;" support="&gitURL;/issues" icon="shield" min="6.12.0">
 
 <CHANGES>
+###2026.10.14a
+- Backup-Runner mit Probelauf, Live-Verlauf, Abbruch, Sperren, Benachrichtigungen und Altersüberwachung.
+- Spiegel und versionierte rsync-Backups lokal/per SSH, Retention, Container-Konsistenz, Cron und Prüfsummenprüfung.
+- Lokale/SSH-ZFS-Replikation, inkrementelle und fortsetzbare Streams, geschützte gemeinsame Snapshots.
+- Datei-/Versionswiederherstellung, temporäre Klone, Dashboard und deaktivierter Import bestehender Jobs.
+- Webgestartete CLI-Worker berücksichtigen Unraids PHP-Preloader; versionierte Assets vermeiden veraltete Browser-Caches nach Updates.
+- Paket-Upgrades werden auch bei alphabetischen Versionssuffixen zuverlässig installiert.
+
 ###2026.10.14
 - Phase 1: Übersicht, Snapshot-Browser, Job-Assistent, Zerobyte-Erkennung, Migration aus User Scripts (nur lesend, noch keine Ausführung)
 - CSRF-Prüfung berücksichtigt das bereits von Unraid geprüfte Token, nachdem Unraid POST/Header bereinigt hat.
@@ -28,15 +36,17 @@ true
 </INLINE>
 </FILE>
 
-<FILE Name="&plgPATH;/&pkg;" Run="upgradepkg --install-new">
+<FILE Name="&plgPATH;/&pkg;" Run="upgradepkg --reinstall --install-new">
 <URL>&pkgURL;</URL>
 <MD5>&md5;</MD5>
 </FILE>
 
 <FILE Run="/bin/bash">
 <INLINE>
+set -e
 chmod 755 &emhttp;/bin/zbg
 ln -sf &emhttp;/bin/zbg /usr/local/sbin/zbg
+&emhttp;/bin/zbg schedule
 echo "ZFS Backup Guard &version; installiert"
 </INLINE>
 </FILE>
@@ -44,6 +54,9 @@ echo "ZFS Backup Guard &version; installiert"
 <!-- Deinstallation: Konfiguration (jobs.json, settings.json) bleibt erhalten -->
 <FILE Run="/bin/bash" Method="remove">
 <INLINE>
+set -e
+&emhttp;/bin/zbg cancel-all
+&emhttp;/bin/zbg schedule-remove
 removepkg &name;
 rm -f /usr/local/sbin/zbg
 rm -rf &emhttp;

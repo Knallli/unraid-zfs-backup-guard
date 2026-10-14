@@ -1,6 +1,8 @@
 /* Mock-API für die lokale UI-Vorschau (dev/server.mjs). Daten angelehnt an das echte System. */
 (function () {
   'use strict';
+  // Diese Datei wird ausschließlich durch dev/index.html mit expliziter Vorschau-Konfiguration geladen.
+  if (window.ZBG_CONFIG?.csrf !== 'dev') return;
   const now = () => Math.floor(Date.now() / 1000);
   const GB = 1024 ** 3;
   const T0 = now();
@@ -79,6 +81,7 @@
 
   const base = {
     enabled: true,
+    verify: false,
     method: 'rsync',
     schedule: '0 2 * * *',
     snapshots: { keep: { hourly: 0, daily: 7, weekly: 4, monthly: 3, yearly: 0 } },
@@ -188,69 +191,32 @@
     ['homeassistant', 'ghcr.io/home-assistant/home-assistant', 'exited'],
   ].map(([name, image, state]) => ({ name, image, state, status: state === 'running' ? 'Up 3 days' : 'Exited (0) 2 days ago' }));
 
-  // Laufsimulation
+  // Laufsimulation mit denselben öffentlichen Feldern wie der echte Runner.
   const runs = {};
-  function newRun(job, dryRun) {
-    const steps = [
-      ['pre', 'Vorprüfung', 'Sperre, Pool, Ziel, Platz'],
-      ['pause', 'Container pausieren', job.consistency.containers.join(', ') || '–'],
-      ['snap', 'Snapshot erstellen', `@zbg_${job.id}_…`],
-      ['resume', 'Container fortsetzen', ''],
-      ['copy', dryRun ? 'Replikation (Probelauf)' : 'Replikation', job.method === 'zfs' ? 'zfs send -I' : 'rsync --link-dest'],
-      ['prune', 'Aufräumen', 'Retention'],
-      ['done', 'Abschluss', 'Verlauf, Benachrichtigung'],
-    ].filter((s) => job.consistency.mode !== 'crash' || !['pause', 'resume'].includes(s[0]));
-    const dsList = jobs.length && datasets.filter((d) => d.name === job.source.dataset || (job.source.recursive && d.name.startsWith(job.source.dataset + '/') && !job.source.exclude.includes(d.name)));
-    const r = { runId: 'run' + Date.now(), job: job.id, jobName: job.name, dryRun, state: 'running', startedAt: now(), tick: 0, pct: 0, rate: 0, eta: null, bytes: 0, files: 0, steps: steps.map(([key, label, detail]) => ({ key, label, detail, state: 'pending' })), datasets: dsList.map((d) => ({ name: d.name, pct: 0, bytes: 0, rate: 0, eta: null, state: 'pending', size: d.used * 0.04 })), log: [{ t: now(), level: 'cmd', msg: `zbg run ${job.id}${dryRun ? ' --dry-run' : ''}` }] };
-    runs[r.runId] = r;
+  const clones = [];
+  function newRun(job, dryRun, verify) {
+    if (!job) err('Job nicht gefunden');
+    if (runs[job.id]?.state === 'running') err('Job läuft bereits');
+    const r = { id: job.id, job: job.id, runId: 'run' + Date.now(), dryRun, verify: verify || job.verify, state: 'running', start: now(), end: null, duration: null, step: 'Vorprüfung', dataset: job.source.dataset, bytes: 0, files: 0, progress: {}, error: null, tick: 0, log: [`VORSCHAU: zbg run ${job.id}${dryRun ? ' --dry-run' : ''}${verify ? ' --verify' : ''}`] };
+    runs[job.id] = r;
     return r;
   }
   function advance(r) {
-    if (r.state !== 'running') return;
+    if (!r || r.state !== 'running') return;
     r.tick++;
-    const log = (msg, level = 'info') => r.log.push({ t: now(), level, msg });
-    const cur = r.steps.findIndex((s) => s.state !== 'done');
-    if (cur < 0) return;
-    const step = r.steps[cur];
-    if (step.key === 'copy') {
-      step.state = 'active';
-      const d = r.datasets.find((x) => x.state !== 'done');
-      if (!d) {
-        step.state = 'done';
-        step.detail = `${(r.bytes / GB).toFixed(1).replace('.', ',')} GB`;
-        log('Replikation abgeschlossen', 'ok');
-      } else {
-        if (d.state === 'pending') log(`rsync ${d.name} → Version ${new Date().toISOString().slice(0, 10)}_020000`, 'cmd');
-        d.state = 'active';
-        d.rate = rnd(180, 420) * 1024 ** 2;
-        const add = Math.max(d.size * rnd(0.18, 0.35), 50 * 1024 ** 2);
-        d.bytes = Math.min(d.size, d.bytes + add);
-        d.pct = (d.bytes / d.size) * 100;
-        d.eta = (d.size - d.bytes) / d.rate;
-        r.bytes += add;
-        r.files += Math.round(rnd(20, 400));
-        r.rate = d.rate;
-        if (Math.random() < 0.5) log(`  ${['config/settings.json', 'postgres/base/16384/2619', 'immich/upload/thumbs/a1/b2.webp', 'nextcloud/data/nextcloud.log'][Math.floor(Math.random() * 4)]}`, 'dim');
-        if (d.pct >= 100) {
-          d.state = 'done';
-          log(`✓ ${d.name}: ${(d.bytes / GB).toFixed(2).replace('.', ',')} GB`, 'ok');
-        }
-      }
-    } else {
-      step.state = 'done';
-      const msgs = { pre: ['Vorprüfung ok: Pool ONLINE, Ziel gemountet, 2,1 TB frei', 'ok'], pause: [`docker pause ${step.detail}`, 'cmd'], snap: [`zfs snapshot -r ${r.job}@zbg_${r.job}_… (12 ms)`, 'cmd'], resume: ['Container fortgesetzt, Ausfall 1,4 s', 'ok'], prune: [r.dryRun ? 'Würde löschen: 1 Snapshot (Probelauf)' : 'Gelöscht: 1 Snapshot, behalten: 14', 'info'], done: ['Fertig ✓', 'ok'] };
-      if (msgs[step.key]) log(...msgs[step.key]);
-      if (r.steps[cur + 1]) r.steps[cur + 1].state = 'active';
-    }
-    const doneSteps = r.steps.filter((s) => s.state === 'done').length;
-    const dsPct = r.datasets.reduce((s, d) => s + d.pct, 0) / Math.max(r.datasets.length, 1);
-    r.pct = Math.min(100, (doneSteps / r.steps.length) * 40 + dsPct * 0.6);
-    r.eta = r.datasets.reduce((s, d) => s + (d.state === 'done' ? 0 : (d.size - d.bytes) / (d.rate || 3e8)), 0);
-    if (r.steps.every((s) => s.state === 'done')) {
+    const pct = Math.min(100, r.tick * 10);
+    r.step = r.dryRun ? 'Plan prüfen (ohne Änderungen)' : pct < 20 ? 'Vorprüfung' : pct < 90 ? 'Replikation' : r.verify ? 'Prüfsummen' : 'Abschluss';
+    r.progress = { percent: pct, rate: r.dryRun ? undefined : '240 MB/s', eta: `${Math.max(0, 10 - r.tick)} s` };
+    r.bytes = r.dryRun ? 0 : r.tick * 40 * 1024 ** 2;
+    r.files = r.dryRun ? 0 : r.tick * 120;
+    r.log.push(`[${new Date().toLocaleTimeString('de-DE')}] ${r.step}: ${pct} %`);
+    if (pct === 100) {
       r.state = 'success';
-      r.pct = 100;
-      r.endedAt = now();
-      history[r.job].unshift({ id: 'r' + hid++, job: r.job, start: r.startedAt, end: now(), duration: now() - r.startedAt, bytes: r.bytes, files: r.files, result: r.dryRun ? 'dry-run' : 'success', snapshot: `zbg_${r.job}_live`, pruned: 1, log: r.log.map((l) => l.msg) });
+      r.end = now();
+      r.duration = r.end - r.start;
+      const checked = !r.dryRun && !!r.verify;
+      history[r.job] ||= [];
+      history[r.job].unshift({ id: r.runId, runId: r.runId, job: r.job, start: r.start, end: r.end, duration: r.duration, bytes: r.bytes, files: r.files, result: r.dryRun ? 'dry-run' : 'success', dryRun: r.dryRun, verify: r.verify, snapshot: r.dryRun ? null : `zbg_${r.job}_live`, pruned: 0, verification: { checked, mismatches: 0 }, datasets: [{ dataset: r.dataset, bytes: r.bytes, files: r.files, verification: { checked, mismatches: 0 } }], log: clone(r.log) });
     }
   }
 
@@ -273,9 +239,10 @@
     switch (action) {
       case 'overview':
         return {
-          version: '2026.10.14',
-          phase: 1,
+          version: '2026.10.14a',
+          phase: 5,
           runnerAvailable: true,
+          runs: clone(runs),
           now: now(),
           pools,
           migration: [{ script: 'zfs snapshot new2093513041', jobs: 4 }],
@@ -287,6 +254,31 @@
         return snapsFor(p.dataset);
       case 'browse':
         return { dataset: p.dataset, snapshot: p.snapshot, ...browse(p.path || '/') };
+      case 'versions': {
+        const j = jobs.find((job) => job.id === p.id);
+        if (!j || j.method !== 'rsync' || j.target.mode !== 'versioned') return [];
+        return [1, 2, 3].map((n) => ({ name: `2026-10-${String(14 - n).padStart(2, '0')}_020000`, time: T0 - n * 86400, path: `${j.target.path}/2026-10-${String(14 - n).padStart(2, '0')}_020000` }));
+      }
+      case 'browse.version':
+        return { job: p.job, version: p.version, ...browse(p.path || '/') };
+      case 'browse.clone':
+        if (!clones.some((c) => c.dataset === p.dataset)) err('Kein eigener Klon');
+        return { dataset: p.dataset, ...browse(p.path || '/') };
+      case 'snapshots.clone': {
+        const c = { dataset: `cache/zbg-clone-${Date.now()}`, mountpoint: `/mnt/cache/zbg-clone-${Date.now()}`, origin: `${p.dataset}@${p.snapshot}`, created: now() };
+        clones.push(c);
+        return clone(c);
+      }
+      case 'clones.list':
+        return clone(clones);
+      case 'clones.remove': {
+        const i = clones.findIndex((c) => c.dataset === p.dataset);
+        if (i < 0) err('Kein eigener Klon');
+        clones.splice(i, 1);
+        return true;
+      }
+      case 'snapshots.rollback-command':
+        return { command: `zfs rollback '${String(p.dataset + '@' + p.snapshot).replace(/'/g, "'\\''")}'`, warning: 'Alle Änderungen nach dem Snapshot gehen verloren. Neuere Snapshots müssen separat beurteilt werden. Kein automatischer Rollback.' };
       case 'source.plan':
         return plan(p.dataset, p.recursive !== false, p.exclude || []);
       case 'downstream':
@@ -295,6 +287,11 @@
         return containers;
       case 'history':
         return Object.values(history).flat().sort((a, b) => b.start - a.start);
+      case 'history.log': {
+        const r = (history[p.id] || []).find((row) => row.id === p.run || row.runId === p.run);
+        if (!r) err('Lauf nicht gefunden');
+        return clone(r.log || []);
+      }
       case 'settings.get':
       case 'settings.save':
         return { logDir: '/mnt/cache/system/zfs-backup-guard', globalLock: true, historyLimit: 500, ...(p.settings || {}) };
@@ -307,6 +304,7 @@
       }
       case 'jobs.save': {
         const j = p.job;
+        if (runs[p.originalId || j.id]?.state === 'running') err('Laufenden Job nicht ändern');
         if (!j.name) err('Name fehlt');
         j.id = j.id || j.name.toLowerCase().replace(/[^a-z0-9]+/g, '-');
         if (jobs.some((x) => x.id === j.id && x.id !== p.originalId)) err(`Ein Job mit der ID ${j.id} existiert bereits`);
@@ -341,25 +339,38 @@
           },
           { script: 'Autosnapshot', active: false, schedule: null, kind: 'spaceinvader', proposals: [{ ...clone(base), id: 'appdata-2', name: 'Appdata → Array', source: { dataset: 'cache/appdata', recursive: true, exclude: [] }, target: { path: '/mnt/user/backup/zbg/appdata', mode: 'versioned', dataset: '', ssh: null }, migration: { oldReplication: 'rsync' } }] },
         ];
-      case 'run.start': {
-        const j = jobs.find((x) => x.id === p.id);
-        const r = newRun(j, !!p.dryRun);
-        return r;
+      case 'migration.import': {
+        const scan = await window.ZBG_MOCK('migration.scan', {});
+        const script = scan.find((s) => s.script === p.script);
+        if (!script) err('Skript nicht gefunden');
+        if (script.proposals.some((j) => jobs.some((existing) => existing.id === j.id))) err('Job-ID bereits vorhanden');
+        const imported = script.proposals.map((j) => { const saved = clone(j); saved.target.adoptExisting = saved.target.mode === 'mirror' && !!saved.migration?.keepPath; delete saved.migration; saved.enabled = false; return saved; });
+        jobs.push(...imported);
+        imported.forEach((j) => { history[j.id] = []; });
+        return clone(imported);
       }
-      case 'run.status': {
-        const r = runs[p.runId];
-        advance(r);
-        return JSON.parse(JSON.stringify(r));
+      case 'run.start':
+        return clone(newRun(jobs.find((j) => j.id === p.id), !!p.dryRun, !!p.verify));
+      case 'run.status':
+        Object.values(runs).forEach(advance);
+        return clone(p.id ? runs[p.id] || null : runs);
+      case 'run.log': {
+        const r = runs[p.id];
+        if (!r || (p.run && r.runId !== p.run)) err('Lauf nicht gefunden');
+        return clone(r.log);
       }
       case 'run.cancel': {
-        const r = runs[p.runId];
+        const r = runs[p.id];
+        if (!r || r.state !== 'running') err('Kein aktiver Lauf');
         r.state = 'cancelled';
-        r.endedAt = now();
-        r.log.push({ t: now(), level: 'warn', msg: 'Abbruch angefordert: SIGTERM, Container werden fortgesetzt' });
-        return true;
+        r.end = now();
+        r.duration = r.end - r.start;
+        r.log.push('VORSCHAU: Lauf abgebrochen, Container wiederhergestellt');
+        history[r.job].unshift({ id: r.runId, job: r.job, start: r.start, end: r.end, duration: r.duration, bytes: r.bytes, files: r.files, result: 'cancelled', log: clone(r.log) });
+        return clone(r);
       }
       case 'restore':
-        return { target: '/mnt/cache/appdata/restore-20261014-0200/' };
+        return { target: p.target || '/mnt/cache/appdata/restore-20261014-020000', targets: [p.target || '/mnt/cache/appdata/restore-20261014-020000'], count: p.paths.length };
       case 'cron.next':
         return window.ZBG.cron.nextN(p.expr, 3);
       default:

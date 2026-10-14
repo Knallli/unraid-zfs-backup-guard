@@ -19,13 +19,24 @@ final class Api
             'source.plan' => Zfs::plan(self::str($p, 'dataset'), (bool)($p['recursive'] ?? true), array_map('strval', (array)($p['exclude'] ?? []))),
             'downstream' => Downstream::plans(),
             'browse' => Browse::list(self::str($p, 'dataset'), self::str($p, 'snapshot'), (string)($p['path'] ?? '')),
+            'browse.clone' => Browse::clone(self::str($p, 'dataset'), (string)($p['path'] ?? '')),
             'history' => ($id = self::optStr($p, 'job')) ? History::forJob($id, 500) : History::all(500),
             'migration.scan' => UserScripts::scan(),
+            'migration.import' => self::importScript(self::str($p, 'script')),
             'settings.get' => JobStore::settings(),
             'settings.save' => JobStore::saveSettings((array)($p['settings'] ?? [])),
             'cron.next' => self::cronNext(self::str($p, 'expr')),
-            'run.start', 'run.cancel', 'run.status' => throw new UserError('Ausführung folgt in Phase 2 – diese Version ist nur lesend.'),
-            'restore' => throw new UserError('Wiederherstellen per Klick folgt in Phase 5 – bitte den angezeigten Befehl verwenden.'),
+            'run.start' => Runner::start(self::str($p, 'id'), (bool)($p['dryRun'] ?? false), (bool)($p['verify'] ?? false)),
+            'run.cancel' => Runner::cancel(self::str($p, 'id')),
+            'run.status' => Runner::status(self::optStr($p, 'id')),
+            'run.log', 'history.log' => Runner::log(self::str($p, 'id'), self::optStr($p, 'run')),
+            'versions' => Versions::list(JobStore::get(self::str($p, 'id'))),
+            'browse.version' => Browse::version(self::str($p, 'job'), self::str($p, 'version'), (string)($p['path'] ?? '')),
+            'restore' => Restore::copy($p),
+            'snapshots.clone' => Restore::clone(self::str($p, 'dataset'), self::str($p, 'snapshot')),
+            'clones.list' => Restore::clones(),
+            'clones.remove' => Restore::removeClone(self::str($p, 'dataset')) ?? true,
+            'snapshots.rollback-command' => Restore::rollbackCommand(self::str($p, 'dataset'), self::str($p, 'snapshot')),
             default => throw new UserError("Unbekannte Aktion: $action"),
         };
     }
@@ -64,13 +75,34 @@ final class Api
         }
         return [
             'version' => VERSION,
-            'phase' => 1,
-            'runnerAvailable' => false,
+            'phase' => 6,
+            'runnerAvailable' => true,
+            'runs' => Runner::status(),
             'now' => time(),
             'jobs' => $jobs,
             'pools' => Zfs::pools(),
             'migration' => array_map(static fn($s) => ['script' => $s['script'], 'jobs' => count($s['proposals'])], $migration),
         ];
+    }
+
+    private static function importScript(string $name): array
+    {
+        foreach (UserScripts::scan() as $script) {
+            if ($script['script'] !== $name) {
+                continue;
+            }
+            $inputs = [];
+            foreach ($script['proposals'] as $proposal) {
+                // Existing User Scripts remain active until the user explicitly cuts over.
+                $proposal['enabled'] = false;
+                $proposal['target']['adoptExisting'] = $proposal['target']['mode'] === 'mirror'
+                    && !empty($proposal['migration']['keepPath'])
+                    && ($proposal['migration']['oldTarget'] ?? null) === $proposal['target']['path'];
+                $inputs[] = $proposal;
+            }
+            return JobStore::saveBatch($inputs);
+        }
+        throw new UserError('Backup-Skript nicht gefunden');
     }
 
     private static function cronNext(string $expr): array

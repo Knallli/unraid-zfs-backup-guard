@@ -153,11 +153,14 @@
     let host = Z.$('.zbg-toasts');
     if (!host) {
       host = document.createElement('div');
+      host.setAttribute('aria-live', 'polite');
+      host.setAttribute('aria-relevant', 'additions');
       host.className = 'zbg-toasts';
       Z.root().appendChild(host);
     }
     const el = document.createElement('div');
     el.className = `zbg-toast tone-${tone}`;
+    if (tone === 'err') el.setAttribute('role', 'alert');
     el.innerHTML = `${Z.icon(tone === 'err' ? 'alert' : tone === 'warn' ? 'info' : 'check')}<span>${esc(msg)}</span>`;
     host.appendChild(el);
     void el.offsetWidth; // Reflow erzwingen, damit die Transition startet (rAF ist in Hintergrund-Tabs gedrosselt)
@@ -177,7 +180,7 @@
     el.className = `zbg-layer ${kind}`;
     el.id = id;
     el.innerHTML = `<div class="zbg-backdrop" data-act="closeLayer"></div>
-      <div class="zbg-dialog size-${size} ${cls}" role="dialog" aria-modal="true" aria-labelledby="${id}-t">
+      <div class="zbg-dialog size-${size} ${cls}" role="dialog" aria-modal="true" aria-labelledby="${id}-t" tabindex="-1">
         <header><h2 id="${id}-t">${title}</h2>${Z.ui.btn('', { act: 'closeLayer', icon: 'x', title: 'Schließen' })}</header>
         <div class="zbg-dialog-body">${body}</div>
         ${footer ? `<footer>${footer}</footer>` : ''}
@@ -186,26 +189,37 @@
     document.body.classList.add('zbg-noscroll');
     void el.offsetWidth; // Reflow erzwingen, damit die Transition startet (rAF ist in Hintergrund-Tabs gedrosselt)
     el.classList.add('in');
-    const layer = { id, el, onClose };
+    const layer = { id, el, onClose, previousFocus: document.activeElement, closed: false };
     layers.push(layer);
-    setTimeout(() => el.querySelector('[autofocus], .zbg-dialog input, .zbg-dialog button.primary')?.focus(), 60);
+    setTimeout(() => {
+      if (!layer.closed) (el.querySelector('[autofocus], .zbg-dialog input, .zbg-dialog button.primary') || el.querySelector('.zbg-dialog')).focus();
+    }, 60);
     return layer;
   };
   Z.closeLayer = function (layer) {
     layer = layer || layers[layers.length - 1];
-    if (!layer) return;
+    if (!layer || layer.closed || (layer.canClose && !layer.canClose())) return;
+    layer.closed = true;
     const i = layers.indexOf(layer);
     if (i >= 0) layers.splice(i, 1);
     layer.el.classList.remove('in');
     setTimeout(() => layer.el.remove(), 220);
     if (!layers.length) document.body.classList.remove('zbg-noscroll');
     layer.onClose && layer.onClose();
+    if (layer.previousFocus?.isConnected) layer.previousFocus.focus();
   };
   Z.closeTopLayer = () => Z.closeLayer();
   Z.topLayer = () => layers[layers.length - 1];
   Z.actions.closeLayer = () => Z.closeLayer();
   document.addEventListener('keydown', (ev) => {
     if (ev.key === 'Escape' && layers.length) Z.closeLayer();
+    const layer = layers[layers.length - 1];
+    if (ev.key !== 'Tab' || !layer) return;
+    const focusable = [...layer.el.querySelectorAll('button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), a[href], [tabindex="0"]')].filter((el) => el.getClientRects().length > 0);
+    const first = focusable[0] || layer.el.querySelector('.zbg-dialog');
+    const last = focusable[focusable.length - 1] || first;
+    if (ev.shiftKey && (document.activeElement === first || !layer.el.contains(document.activeElement))) { ev.preventDefault(); last.focus(); }
+    else if (!ev.shiftKey && (document.activeElement === last || !layer.el.contains(document.activeElement))) { ev.preventDefault(); first.focus(); }
   });
 
   Z.confirm = function ({ title, text, ok = 'Bestätigen', tone = 'danger', icon = 'alert' }) {

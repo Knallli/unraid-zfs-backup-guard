@@ -19,8 +19,9 @@ final class Job
             'enabled' => true,
             'source' => ['dataset' => '', 'recursive' => true, 'exclude' => []],
             'method' => 'rsync',
-            'target' => ['path' => '', 'mode' => 'versioned', 'dataset' => '', 'ssh' => null],
+            'target' => ['path' => '', 'mode' => 'versioned', 'dataset' => '', 'ssh' => null, 'adoptExisting' => false],
             'schedule' => '0 2 * * *',
+            'verify' => false,
             'snapshots' => ['keep' => ['hourly' => 0, 'daily' => 7, 'weekly' => 4, 'monthly' => 3, 'yearly' => 0]],
             'versions' => ['keep' => ['daily' => 14, 'weekly' => 8, 'monthly' => 6]],
             'consistency' => ['mode' => 'crash', 'containers' => []],
@@ -71,6 +72,7 @@ final class Job
         if ($j['method'] === 'rsync') {
             $j['target']['path'] = Paths::normalizeTarget((string)($t['path'] ?? ''));
             $j['target']['mode'] = self::oneOf($t['mode'] ?? 'versioned', ['mirror', 'versioned'], 'Zielmodus');
+            $j['target']['adoptExisting'] = $j['target']['mode'] === 'mirror' && (bool)($t['adoptExisting'] ?? false);
             if (str_starts_with($j['target']['path'] . '/', self::mountOf($j['source']['dataset'], $checkSystem) . '/')) {
                 throw new UserError('Das Ziel liegt innerhalb der Quelle');
             }
@@ -90,6 +92,8 @@ final class Job
         if (!Cron::valid($j['schedule'])) {
             throw new UserError('Zeitplan ist kein gültiger Cron-Ausdruck');
         }
+        $j['schedule'] = implode(' ', preg_split('~\s+~', $j['schedule']));
+        $j['verify'] = (bool)($in['verify'] ?? false);
         foreach (self::KEEP_SNAP as $k) {
             $j['snapshots']['keep'][$k] = self::int($in['snapshots']['keep'][$k] ?? $d['snapshots']['keep'][$k], 0, 1000);
         }
@@ -141,11 +145,13 @@ final class Job
             throw new UserError('SSH-Host oder -Benutzer ungültig');
         }
         $key = trim((string)($s['key'] ?? ''));
+        $knownHosts = trim((string)($s['knownHosts'] ?? ''));
         return [
             'host' => $host,
             'user' => $user,
             'port' => self::int($s['port'] ?? 22, 1, 65535),
             'key' => $key === '' ? null : Paths::normalizeScript($key),
+            'knownHosts' => $knownHosts === '' ? null : Paths::normalizeScript($knownHosts),
         ];
     }
 

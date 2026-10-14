@@ -124,7 +124,7 @@
     const names = ov.migration.map((m) => `„${esc(m.script)}“`).join(', ');
     return `<section class="zbg-banner">
       <div class="bn-ic">${icon('sparkles')}</div>
-      <div class="bn-text"><b>User-Script-Backups erkannt</b><span>${names} läuft noch per Zeitplan. ${n} ${n === 1 ? 'Job kann' : 'Jobs können'} übernommen werden. Danach gibt es lokale Snapshots mit Aufbewahrung, Container-Konsistenz und Überwachung. Ziele, die Zerobyte weitersichert, bleiben unverändert.</span></div>
+      <div class="bn-text"><b>User-Script-Backups erkannt</b><span>${names}: ${n} ${n === 1 ? 'Job kann' : 'Jobs können'} geprüft übernommen werden. Importierte Jobs bleiben zunächst pausiert. Bestehende User-Script-Zeitpläne werden nicht verändert.</span></div>
       <div class="bn-act">${ui.btn('Übernehmen', { act: 'openMigration', kind: 'primary', icon: 'download' })}${ui.btn('', { act: 'hideMigration', icon: 'x', title: 'Ausblenden' })}</div>
     </section>`;
   }
@@ -137,7 +137,7 @@
     const avg = j.runs.length ? j.runs.reduce((s, r) => s + (r.duration || 0), 0) / j.runs.length : null;
     const last = j.status.lastSuccess;
     const canRun = ov.runnerAvailable;
-    const noRun = 'Ausführung folgt in Phase 2';
+    const noRun = 'Runner ist nicht verfügbar';
     const cls = run && run.state === 'running' ? 'running' : '';
     return `<article class="zbg-job tone-${meta.tone} ${cls}" data-job="${esc(job.id)}" style="--i:${ov.jobs.indexOf(j)}">
       <header>
@@ -183,8 +183,9 @@
         ${
           run && run.state === 'running'
             ? ui.btn('Live ansehen', { act: 'openRun', icon: 'eye', kind: 'primary', data: { id: job.id } }) + ui.btn('Abbrechen', { act: 'cancelRun', icon: 'stop', kind: 'danger-ghost', data: { id: job.id } })
-            : ui.btn('Jetzt sichern', { act: 'runJob', icon: 'play', kind: 'primary', data: { id: job.id }, disabled: !canRun || !job.enabled, title: canRun ? '' : noRun }) +
-              ui.btn('Probelauf', { act: 'dryRun', icon: 'flask', data: { id: job.id }, disabled: !canRun, title: canRun ? 'Zeigt, was passieren würde – ohne Änderungen' : noRun })
+            : ui.btn('Jetzt sichern', { act: 'runJob', icon: 'play', kind: 'primary', data: { id: job.id }, disabled: !canRun, title: canRun ? 'Einmal manuell sichern, auch bei pausiertem Zeitplan' : noRun }) +
+              ui.btn('Probelauf', { act: 'dryRun', icon: 'flask', data: { id: job.id }, disabled: !canRun, title: canRun ? 'Zeigt den Plan – ohne Änderungen' : noRun }) +
+              (job.method === 'rsync' ? ui.btn('Mit Prüfung', { act: 'verifyRun', icon: 'shieldCheck', data: { id: job.id }, disabled: !canRun, title: 'Backup ausführen und anschließend Prüfsummen vergleichen' }) : '')
         }
         <span class="grow"></span>
         ${ui.btn('', { act: 'toggleJob', icon: job.enabled ? 'pause' : 'play', title: job.enabled ? 'Zeitplan pausieren' : 'Zeitplan fortsetzen', data: { id: job.id } })}
@@ -197,12 +198,12 @@
   function runStrip(id) {
     const r = Z.state.runs[id];
     if (!r || r.state !== 'running') return '';
-    const step = r.steps.find((s) => s.state === 'active') || r.steps[r.steps.length - 1];
-    return `<div class="run-strip" data-act="openRun" data-id="${esc(id)}">
-      <div class="rs-h"><span>${icon('refresh', 'spin')}${esc(step.label)}${r.dryRun && !/Probelauf/.test(step.label) ? ' · Probelauf' : ''}</span><b>${Math.round(r.pct)} %</b></div>
-      ${ui.progress(r.pct, { striped: true })}
-      <div class="rs-f"><span>${fmt.rate(r.rate)}</span><span>${r.eta ? 'noch ' + fmt.duration(r.eta) : ''}</span></div>
-    </div>`;
+    const pct = typeof r.progress?.percent === 'number' ? Z.clamp(r.progress.percent, 0, 100) : null;
+    return `<button type="button" class="run-strip" data-act="openRun" data-id="${esc(id)}">
+      <div class="rs-h"><span>${icon('refresh', 'spin')}${esc(r.step || 'Läuft')}${r.dryRun ? ' · Probelauf' : ''}</span><b>${pct === null ? '' : Math.round(pct) + ' %'}</b></div>
+      ${pct === null ? '' : ui.progress(pct, { striped: true })}
+      <div class="rs-f"><span class="mono">${esc(r.dataset || '')}</span><span>${esc(r.progress?.rate || '')}${r.progress?.eta ? ' · ' + esc(r.progress.eta) : ''} · ${fmt.bytes(r.bytes)}</span></div>
+    </button>`;
   }
   Z.runStrip = runStrip;
 
@@ -212,7 +213,7 @@
       if (!ov) return loadingView();
       const cards = ov.jobs.map((j) => jobCard(j, ov)).join('');
       return `${migrationBanner(ov)}${hero(ov)}
-        ${ov.runnerAvailable ? '' : `<div class="zbg-note">${icon('info')}<span><b>Phase 1 (nur lesend).</b> Jobs lassen sich bereits anlegen und prüfen. Die Ausführung, also Snapshot, Kopie und Aufräumen, kommt mit Phase 2.</span></div>`}
+        ${ov.runnerAvailable ? '' : `<div class="zbg-callout tone-err">${icon('alert')}<div>Der Runner ist nicht verfügbar. Prüfe die Installation und das Server-Log.</div></div>`}
         <div class="zbg-section-h"><h2>Backup-Jobs</h2><div>${ui.btn('Neuer Job', { act: 'newJob', icon: 'plus', kind: 'primary' })}</div></div>
         ${
           ov.jobs.length
@@ -230,6 +231,8 @@
   Z.loadOverview = async function () {
     try {
       Z.state.overview = await Z.api('overview');
+      Z.state.runs = Z.state.overview.runs || {};
+      Z.pollRuns();
       Z.state.error = null;
     } catch (e) {
       Z.state.error = e.message;
@@ -237,10 +240,11 @@
     }
     if (Z.state.view === 'overview') Z.render();
     Z.updateHeader();
+    Z.scheduleOverviewRefresh?.();
   };
 
   /* ---------- Aktionen der Übersicht ---------- */
-  const findJob = (id) => Z.state.overview.jobs.find((j) => j.job.id === id);
+  const findJob = (id) => Z.state.overview?.jobs.find((j) => j.job.id === id);
   Z.findJob = findJob;
 
   Z.actions.reload = () => Z.loadOverview();
@@ -320,130 +324,180 @@
   /* =================================================================== */
 
   let pollTimer = null;
-  Z.pollRuns = function () {
+  let pollBusy = false;
+  let pollErrors = 0;
+  let pollStopped = false;
+  let liveLayer = null;
+  let liveId = null;
+  let liveLog = [];
+  const startingJobs = new Set();
+  const logText = (lines) => (Array.isArray(lines) ? lines : []).slice(-2000).map((l) => typeof l === 'string' ? l : `${l.t ? fmt.dateFull(l.t) + ' ' : ''}${l.msg ?? l.message ?? JSON.stringify(l)}`).join('\n');
+  const needsPoll = () => !document.hidden && !pollStopped && Object.values(Z.state.runs).some((r) => r.state === 'running') && (Z.state.view === 'overview' || liveLayer !== null);
+  Z.stopPolling = () => {
     clearTimeout(pollTimer);
-    const active = Object.values(Z.state.runs).filter((r) => r.state === 'running');
-    if (!active.length) return;
-    pollTimer = setTimeout(async () => {
-      for (const r of active) {
-        try {
-          const s = await Z.api('run.status', { runId: r.runId });
-          Z.state.runs[r.job] = s;
-          if (s.state !== 'running') {
-            Z.toast(
-              s.state === 'success' ? `„${s.jobName}“ ${s.dryRun ? 'Probelauf' : 'Backup'} erfolgreich` : s.state === 'cancelled' ? `„${s.jobName}“ abgebrochen` : `„${s.jobName}“ fehlgeschlagen`,
-              s.state === 'success' ? 'ok' : s.state === 'cancelled' ? 'warn' : 'err'
-            );
-            Z.loadOverview();
-          }
-        } catch (e) {
-          r.state = 'failed';
+    pollTimer = null;
+  };
+  Z.pollRuns = function () {
+    Z.stopPolling();
+    if (pollBusy || !needsPoll()) return;
+    pollTimer = setTimeout(pollOnce, 1500);
+  };
+  async function loadRunLog(id) {
+    const r = Z.state.runs[id];
+    if (!r) return;
+    const lines = await Z.api('run.log', { id, run: r.runId });
+    if (liveId === id && Z.state.runs[id]?.runId === r.runId) liveLog = lines;
+  }
+  async function pollOnce() {
+    pollTimer = null;
+    if (!needsPoll()) return;
+    pollBusy = true;
+    let finished = false;
+    try {
+      const states = await Z.api('run.status');
+      for (const [id, s] of Object.entries(states || {})) {
+        const previous = Z.state.runs[id];
+        Z.state.runs[id] = s;
+        if (previous?.state === 'running' && s.state !== 'running') {
+          const name = findJob(id)?.job.name || id;
+          Z.toast(`„${name}“: ${s.state === 'success' ? (s.dryRun ? 'Probelauf erfolgreich' : 'Backup erfolgreich') : s.state === 'cancelled' ? 'abgebrochen' : 'fehlgeschlagen'}`, s.state === 'success' ? 'ok' : s.state === 'cancelled' ? 'warn' : 'err');
+          finished = true;
         }
-        Z.refresh('run-' + r.job);
-        Z.refresh('live');
       }
+      if (liveId) await loadRunLog(liveId);
+      pollErrors = 0;
+      if (liveLayer) updateLive();
+      if (Z.state.view === 'overview') Z.render();
+      Z.updateHeader();
+      if (finished) await Z.loadOverview();
+    } catch (e) {
+      pollErrors++;
+      if (liveLayer) {
+        const error = liveLayer.el.querySelector('[data-live-error]');
+        error.textContent = `Status nicht erreichbar: ${e.message}`;
+      }
+      if (pollErrors >= 3) {
+        pollStopped = true;
+        Z.fail(new Error(`Live-Aktualisierung angehalten: ${e.message}. Bitte erneut aktualisieren.`));
+      }
+    } finally {
+      pollBusy = false;
       Z.pollRuns();
-    }, 1000);
+    }
+  }
+  document.addEventListener('visibilitychange', () => document.hidden ? Z.stopPolling() : Z.pollRuns());
+  window.addEventListener('pagehide', () => {
+    pollStopped = true;
+    Z.stopPolling();
+  });
+  window.addEventListener('pageshow', (event) => {
+    if (event.persisted) { pollStopped = false; Z.pollRuns(); }
+  });
+  Z.actions.retryRun = async () => {
+    pollStopped = false;
+    pollErrors = 0;
+    const states = await Z.api('run.status');
+    Z.state.runs = states || {};
+    if (liveId) await loadRunLog(liveId);
+    updateLive();
+    if (Z.state.view === 'overview') Z.render();
+    Z.pollRuns();
   };
 
-  async function startRun(id, dryRun) {
+  async function startRun(id, dryRun, verify = false) {
+    if (startingJobs.has(id)) return;
+    startingJobs.add(id);
     try {
-      const s = await Z.api('run.start', { id, dryRun });
+      const s = await Z.api('run.start', { id, dryRun, verify });
       Z.state.runs[id] = s;
+      pollStopped = false;
+      pollErrors = 0;
       Z.render();
+      await openRun(id);
       Z.pollRuns();
-      openRun(id);
     } catch (e) {
       Z.fail(e);
+    } finally {
+      startingJobs.delete(id);
     }
   }
   Z.actions.runJob = (el) => startRun(el.dataset.id, false);
   Z.actions.dryRun = (el) => startRun(el.dataset.id, true);
+  Z.actions.verifyRun = (el) => startRun(el.dataset.id, false, true);
   Z.actions.cancelRun = async (el) => {
     const id = el.dataset.id;
+    if (Z.state.runs[id]?.state !== 'running') return;
     const ok = await Z.confirm({
       title: 'Lauf abbrechen?',
-      text: 'Der Lauf wird sauber beendet, pausierte Container werden wieder gestartet. Der angelegte Snapshot bleibt erhalten.',
-      ok: 'Abbrechen',
+      text: 'Der Lauf wird beendet und angehaltene Container werden wiederhergestellt. Der angelegte Snapshot bleibt erhalten. Bitte bis zum endgültigen Status warten.',
+      ok: 'Lauf abbrechen',
     });
     if (!ok) return;
-    try {
-      await Z.api('run.cancel', { runId: Z.state.runs[id].runId });
-    } catch (e) {
-      Z.fail(e);
-    }
-  };
-
-  const STEP_IC = { done: 'check', active: 'refresh', pending: 'clock', failed: 'x', skipped: 'right' };
-  Z.refreshers.live = (el) => liveBody(el.dataset.id);
-  // Regionen „run-<id>“ dynamisch auflösen
-  const origRefresh = Z.refresh;
-  Z.refresh = function (name) {
-    if (name.startsWith('run-') && !Z.refreshers[name]) {
-      const id = name.slice(4);
-      Z.$$(`[data-region="${name}"]`).forEach((el) => (el.innerHTML = runStrip(id)));
-      const card = Z.$(`.zbg-job[data-job="${CSS.escape(id)}"]`);
-      if (card && Z.state.runs[id] && Z.state.runs[id].state !== 'running') card.classList.remove('running');
-      return;
-    }
-    origRefresh(name);
+    await Z.api('run.cancel', { id });
+    Z.toast('Abbruch angefordert; Aufräumen abwarten.', 'warn');
+    Z.pollRuns();
   };
 
   function liveBody(id) {
     const r = Z.state.runs[id];
-    if (!r) return '';
+    if (!r) return ui.empty('alert', 'Kein Laufstatus', 'Aktualisieren, um den Status erneut abzurufen.');
     const tone = r.state === 'running' ? 'run' : r.state === 'success' ? 'ok' : r.state === 'cancelled' ? 'warn' : 'err';
-    const elapsed = (r.endedAt || Date.now() / 1000) - r.startedAt;
+    const pct = typeof r.progress?.percent === 'number' ? Z.clamp(r.progress.percent, 0, 100) : null;
     return `<div class="live-top tone-${tone}">
-        <div class="live-pct">${ui.ring([{ value: r.pct, tone }, { value: 100 - r.pct, tone: 'none' }], { size: 92, stroke: 9, center: `<strong>${Math.round(r.pct)}<small>%</small></strong>` })}</div>
-        <div class="live-meta">
-          ${ui.kv([
-            ['Status', ui.badge(r.state === 'running' ? (r.dryRun ? 'Probelauf läuft' : 'Läuft') : r.state === 'success' ? 'Erfolgreich' : r.state === 'cancelled' ? 'Abgebrochen' : 'Fehlgeschlagen', tone)],
-            ['Laufzeit', fmt.duration(elapsed)],
-            ['Durchsatz', fmt.rate(r.rate)],
-            ['Übertragen', `${fmt.bytes(r.bytes)} · ${fmt.num(r.files)} Dateien`],
-          ])}
-        </div>
+        <div class="live-meta">${ui.kv([
+          ['Status', ui.badge(r.state === 'running' ? (r.dryRun ? 'Probelauf läuft' : 'Läuft') : r.state === 'success' ? (r.dryRun ? 'Probelauf erfolgreich' : 'Erfolgreich') : r.state === 'cancelled' ? 'Abgebrochen' : 'Fehlgeschlagen', tone)],
+          ['Schritt', esc(r.step || '–')],
+          ['Dataset', `<span class="mono">${esc(r.dataset || '–')}</span>`],
+          ['Durchsatz / ETA', esc([r.progress?.rate, r.progress?.eta].filter(Boolean).join(' · ') || '–')],
+          ['Start', esc(fmt.dateFull(r.start))],
+          ['Laufzeit', fmt.duration(r.duration ?? ((r.end || Date.now() / 1000) - r.start))],
+          ['Übertragen', `${fmt.bytes(r.bytes)} · ${fmt.num(r.files)} Dateien`],
+          ['Lauf-ID', `<span class="mono">${esc(r.runId || '–')}</span>`],
+        ])}</div>
       </div>
-      <ol class="live-steps">${r.steps
-        .map((s) => `<li class="st-${s.state}"><span class="st-ic">${icon(STEP_IC[s.state] || 'clock', s.state === 'active' ? 'spin' : '')}</span><span class="st-l">${esc(s.label)}</span><span class="st-d">${esc(s.detail || '')}</span></li>`)
-        .join('')}</ol>
-      ${
-        r.datasets && r.datasets.length
-          ? `<div class="live-ds"><h4>Datasets</h4>${r.datasets
-              .map(
-                (d) => `<div class="ds-row st-${d.state}"><span class="mono">${esc(d.name)}</span>${ui.progress(d.pct, { striped: d.state === 'active', tone: d.state === 'done' ? 'ok' : 'accent' })}<span class="ds-v">${d.state === 'active' ? `${fmt.rate(d.rate)} · ${d.eta ? 'noch ' + fmt.duration(d.eta) : ''}` : d.state === 'done' ? fmt.bytes(d.bytes) : 'wartet'}</span></div>`
-              )
-              .join('')}</div>`
-          : ''
-      }
+      ${pct === null ? '<p class="muted">Für diesen Schritt ist kein prozentualer Fortschritt verfügbar.</p>' : ui.progress(pct, { tone, striped: r.state === 'running', label: Math.round(pct) + ' %' })}
+      ${r.error ? `<div class="zbg-callout tone-err">${icon('alert')}<div>${esc(r.error)}</div></div>` : ''}
       <div class="live-log"><div class="log-h"><h4>${icon('terminal')}Log</h4><label class="zbg-check"><input type="checkbox" data-act="toggleFollow"${Z.state.noFollow ? '' : ' checked'}><span>Mitlaufen</span></label></div>
-        <pre class="zbg-term">${r.log.map((l) => `<span class="lv-${l.level}"><i>${new Date(l.t * 1000).toLocaleTimeString(Z.cfg.locale)}</i>${esc(l.msg)}</span>`).join('\n')}</pre></div>`;
+        <pre class="zbg-term" tabindex="0" aria-label="Laufprotokoll">${esc(logText(liveLog) || 'Noch keine Log-Ausgabe.')}</pre></div>`;
   }
-
-  function openRun(id) {
+  function updateLive() {
+    if (!liveLayer) return;
+    const body = liveLayer.el.querySelector('[data-region="live"]');
+    body.innerHTML = liveBody(liveId);
+    const cancel = liveLayer.el.querySelector('[data-act="cancelRun"]');
+    if (cancel) cancel.disabled = Z.state.runs[liveId]?.state !== 'running';
+    const term = body.querySelector('.zbg-term');
+    if (term && !Z.state.noFollow) term.scrollTop = term.scrollHeight;
+  }
+  async function openRun(id) {
+    if (liveLayer) Z.closeLayer(liveLayer);
+    liveId = id;
+    liveLog = [];
     const r = Z.state.runs[id];
-    if (!r) return;
-    const layer = Z.modal({
+    liveLayer = Z.modal({
       kind: 'sheet',
       size: 'lg',
-      title: `${icon('zap')} ${esc(r.jobName)} <span class="muted">${r.dryRun ? '· Probelauf' : '· Live'}</span>`,
-      body: `<div data-region="live" data-id="${esc(id)}">${liveBody(id)}</div>`,
-      footer: r.state === 'running' ? ui.btn('Lauf abbrechen', { act: 'cancelRun', icon: 'stop', kind: 'danger-ghost', data: { id } }) + ui.btn('Schließen', { act: 'closeLayer', kind: 'primary' }) : ui.btn('Schließen', { act: 'closeLayer', kind: 'primary' }),
+      title: `${icon('zap')} ${esc(findJob(id)?.job.name || id)} <span class="muted">${r?.dryRun ? '· Probelauf' : '· Laufstatus'}</span>`,
+      body: `<p class="err" role="status" data-live-error></p><div data-region="live" data-id="${esc(id)}">${liveBody(id)}</div>`,
+      footer: ui.btn('Aktualisieren', { act: 'retryRun', icon: 'refresh' }) + ui.btn('Lauf abbrechen', { act: 'cancelRun', icon: 'stop', kind: 'danger-ghost', data: { id }, disabled: r?.state !== 'running' }) + ui.btn('Schließen', { act: 'closeLayer', kind: 'primary' }),
+      onClose: () => {
+        liveLayer = null;
+        liveId = null;
+        Z.pollRuns();
+      },
     });
-    const scroll = () => {
-      const t = layer.el.querySelector('.zbg-term');
-      if (t && !Z.state.noFollow) t.scrollTop = t.scrollHeight;
-    };
-    scroll();
-    const mo = new MutationObserver(scroll);
-    mo.observe(layer.el.querySelector('[data-region="live"]'), { childList: true });
-    layer.onClose = () => mo.disconnect();
+    const layer = liveLayer;
+    try {
+      Z.state.runs[id] = await Z.api('run.status', { id });
+      await loadRunLog(id);
+      if (liveLayer === layer) updateLive();
+    } catch (e) {
+      if (liveLayer === layer) layer.el.querySelector('[data-live-error]').textContent = e.message;
+    }
+    Z.pollRuns();
   }
   Z.actions.openRun = (el) => openRun(el.dataset.id);
-  Z.actions.toggleFollow = (el, ev) => {
-    Z.state.noFollow = !el.checked;
-  };
+  Z.actions.toggleFollow = (el) => { Z.state.noFollow = !el.checked; };
 
   /* =================================================================== */
   /* Snapshots                                                            */
@@ -459,18 +513,22 @@
     return r.datasets;
   };
 
-  const snap = (Z.state.snap = { dataset: null, list: null, filter: 'all', q: '', loading: false });
+  const snap = (Z.state.snap = { dataset: null, list: null, filter: 'all', q: '', error: null });
+  let snapshotRequest = 0;
 
   Z.views.snapshots = {
     async enter(params) {
+      const ticket = ++snapshotRequest;
       try {
         await Z.loadDatasets();
+        if (ticket !== snapshotRequest || Z.state.view !== 'snapshots') return;
       } catch (e) {
         return Z.fail(e);
       }
       const ds = params.dataset || snap.dataset || (Z.state.overview?.jobs[0]?.job.source.dataset) || Z.state.datasets.find((d) => d.name.includes('/'))?.name;
       selectDataset(ds);
     },
+    leave() { snapshotRequest++; },
     render() {
       const dss = Z.state.datasets;
       if (!dss) return `<div class="zbg-split"><aside class="zbg-side">${ui.skeleton(8)}</aside><section class="zbg-panel">${ui.skeleton(6)}</section></div>`;
@@ -517,15 +575,19 @@
 
   async function selectDataset(ds) {
     if (!ds) return;
+    const ticket = ++snapshotRequest;
     snap.dataset = ds;
     snap.list = null;
-    snap.selected = new Set();
+    snap.error = null;
     if (Z.state.view === 'snapshots') Z.render();
     try {
-      snap.list = await Z.api('snapshots', { dataset: ds });
+      const list = await Z.api('snapshots', { dataset: ds });
+      if (ticket !== snapshotRequest) return;
+      snap.list = list;
     } catch (e) {
+      if (ticket !== snapshotRequest) return;
+      snap.error = e.message;
       snap.list = [];
-      Z.fail(e);
     }
     if (Z.state.view === 'snapshots') Z.refresh('snaplist');
   }
@@ -572,7 +634,7 @@
           <td class="acts">
             ${ui.btn('', { act: 'browseSnap', icon: 'search', title: 'Durchsuchen', data: { ds: s.dataset, snap: s.snapshot } })}
             ${ui.btn('', { act: 'rollbackHint', icon: 'restore', title: 'Rollback-Befehl anzeigen', data: { ds: s.dataset, snap: s.snapshot } })}
-            ${ui.btn('', { icon: 'copy', title: 'Klonen – folgt in Phase 5', disabled: true })}
+            ${ui.btn('', { act: 'cloneSnap', icon: 'copy', title: 'Temporären Klon erstellen', data: { ds: s.dataset, snap: s.snapshot } })}
           </td></tr>`;
       })
       .join('');
@@ -585,8 +647,8 @@
     const own = list ? list.filter((s) => s.kind === 'zbg').length : 0;
     const head = `<div class="panel-h">
         <div><h2>${icon('database')}${esc(ds.name)}</h2>
-        <p class="muted mono">${esc(ds.mountpoint)} · ${fmt.bytes(ds.used)} belegt · davon ${fmt.bytes(ds.usedSnap)} durch Snapshots · Kompression ${ds.compressratio}×</p></div>
-        <div class="panel-act">${ui.btn('Durchsuchen', { act: 'restoreFrom', icon: 'restore', data: { ds: ds.name } })}</div>
+        <p class="muted mono">${esc(ds.mountpoint)} · ${fmt.bytes(ds.used)} belegt · davon ${fmt.bytes(ds.usedSnap)} durch Snapshots · Kompression ${esc(ds.compressratio)}×</p></div>
+        <div class="panel-act">${ui.btn('Temporäre Klone', { act: 'listClones', icon: 'copy' })}${ui.btn('Durchsuchen', { act: 'restoreFrom', icon: 'restore', data: { ds: ds.name } })}</div>
       </div>`;
     if (!list) return head + ui.skeleton(6);
     const total = list.reduce((s, x) => s + x.used, 0);
@@ -633,14 +695,14 @@
   Z.snapTimeline = snapTimeline;
 
   Z.actions.browseSnap = (el) => Z.go('restore', { dataset: el.dataset.ds, snapshot: el.dataset.snap });
-  Z.actions.rollbackHint = (el) => {
-    const cmd = `zfs rollback -r '${el.dataset.ds}@${el.dataset.snap}'`;
+  Z.actions.rollbackHint = async (el) => {
+    const result = await Z.api('snapshots.rollback-command', { dataset: el.dataset.ds, snapshot: el.dataset.snap });
     Z.modal({
       title: `${icon('alert')} Rollback – nur manuell`,
       size: 'md',
-      body: `<div class="zbg-callout tone-err">${icon('alert')}<div><b>Achtung: destruktiv.</b> Ein Rollback setzt <b>${esc(el.dataset.ds)}</b> komplett auf den Stand des Snapshots zurück. Alle Änderungen danach gehen verloren, und mit <code>-r</code> werden auch <b>alle neueren Snapshots gelöscht</b>. Container und VMs auf dem Dataset vorher stoppen.</div></div>
-        <p>Für einzelne Dateien ist <b>Wiederherstellen</b> der sichere Weg. Wenn du wirklich zurückrollen willst, führe den Befehl im Terminal aus:</p>
-        <div class="zbg-code" data-copy="${esc(cmd)}"><span>${esc(cmd)}</span>${ui.btn('', { act: 'copy', icon: 'copy', title: 'Kopieren' })}</div>`,
+      body: `<div class="zbg-callout tone-err">${icon('alert')}<div><b>Achtung: destruktiv.</b> ${esc(result.warning)}</div></div>
+        <p>Container und VMs vorher stoppen. Für einzelne Dateien ist <b>Wiederherstellen</b> der sichere Weg. Das Plugin führt keinen Rollback aus.</p>
+        <div class="zbg-code" data-copy="${esc(result.command)}"><span>${esc(result.command)}</span>${ui.btn('', { act: 'copy', icon: 'copy', title: 'Kopieren' })}</div>`,
       footer: ui.btn('Stattdessen Dateien wiederherstellen', { act: 'browseSnapClose', icon: 'restore', kind: 'primary', data: { ds: el.dataset.ds, snap: el.dataset.snap } }),
     });
   };
@@ -648,12 +710,80 @@
     Z.closeLayer();
     Z.actions.browseSnap(el);
   };
+  Z.actions.cloneSnap = async (el) => {
+    const dataset = el.dataset.ds;
+    const snapshot = el.dataset.snap;
+    if (!await Z.confirm({ title: 'Temporären Klon erstellen?', text: `<b class="mono">${esc(dataset)}@${esc(snapshot)}</b> wird als separates Dataset gemountet. Änderungen am Klon verändern den Snapshot nicht. Den Klon anschließend über „Temporäre Klone“ entfernen.`, ok: 'Klon erstellen', tone: 'primary', icon: 'copy' })) return;
+    el.disabled = true;
+    try {
+      const clone = await Z.api('snapshots.clone', { dataset, snapshot });
+      Z.state.datasets = null;
+      Z.modal({
+        title: 'Klon erstellt',
+        body: ui.kv([['Dataset', `<span class="mono">${esc(clone.dataset)}</span>`], ['Mountpoint', `<span class="mono">${esc(clone.mountpoint)}</span>`], ['Ursprung', `<span class="mono">${esc(clone.origin)}</span>`]]) + '<p>Das Dataset kann am Mountpoint durchsucht werden. Beim Entfernen gehen alle Änderungen im Klon verloren.</p>',
+        footer: ui.btn('Durchsuchen', { act: 'browseClone', icon: 'search', kind: 'primary', data: { ds: clone.dataset } }) + ui.btn('Klone verwalten', { act: 'listClones', icon: 'copy' }),
+      });
+    } finally {
+      el.disabled = false;
+    }
+  };
+  Z.actions.listClones = async () => {
+    const layer = Z.modal({ title: `${icon('copy')} Temporäre Klone`, size: 'lg', body: ui.skeleton(4) });
+    try {
+      const clones = await Z.api('clones.list');
+      layer.el.querySelector('.zbg-dialog-body').innerHTML = clones.length ? `<p class="muted">Nur von Backup Guard erstellte temporäre Klone. Entfernen löscht alle Änderungen im Klon, nicht den Ursprung.</p><div class="zbg-table-wrap"><table class="zbg-table"><thead><tr><th>Dataset / Ursprung</th><th>Mountpoint</th><th></th></tr></thead><tbody>${clones.map((c) => `<tr><td><b class="mono">${esc(c.dataset)}</b><br><small class="mono">${esc(c.origin)}</small></td><td class="mono">${esc(c.mountpoint)}</td><td>${ui.btn('Durchsuchen', { act: 'browseClone', icon: 'search', data: { ds: c.dataset } })}${ui.btn('Entfernen', { act: 'removeClone', icon: 'trash', kind: 'danger-ghost', data: { ds: c.dataset } })}</td></tr>`).join('')}</tbody></table></div>` : ui.empty('copy', 'Keine temporären Klone', 'In der Snapshot-Tabelle lässt sich ein Klon anlegen.');
+    } catch (e) {
+      layer.el.querySelector('.zbg-dialog-body').innerHTML = ui.empty('alert', 'Klone nicht lesbar', e.message);
+    }
+  };
+  Z.actions.removeClone = async (el) => {
+    const dataset = el.dataset.ds;
+    if (!await Z.confirm({ title: 'Klon entfernen?', text: `Das temporäre Dataset <b class="mono">${esc(dataset)}</b> wird gelöscht. Alle Änderungen im Klon gehen verloren. Der ursprüngliche Snapshot bleibt erhalten.`, ok: 'Klon entfernen' })) return;
+    el.disabled = true;
+    try {
+      await Z.api('clones.remove', { dataset });
+      el.closest('tr').remove();
+      Z.state.datasets = null;
+      Z.toast('Temporärer Klon entfernt');
+    } finally {
+      el.disabled = false;
+    }
+  };
+  Z.actions.browseClone = async (el) => {
+    const dataset = el.dataset.ds;
+    let sequence = 0;
+    let closed = false;
+    const layer = Z.modal({ title: `${icon('copy')} ${esc(dataset)}`, size: 'lg', body: ui.skeleton(6), onClose: () => { closed = true; sequence++; } });
+    const body = layer.el.querySelector('.zbg-dialog-body');
+    async function open(path) {
+      const ticket = ++sequence;
+      body.innerHTML = ui.skeleton(6);
+      try {
+        const listing = await Z.api('browse.clone', { dataset, path });
+        if (closed || sequence !== ticket) return;
+        let acc = '';
+        const crumbs = `<nav class="crumbs" aria-label="Klonverzeichnis"><button type="button" data-clone-path="/">${icon('folder')}/</button>${listing.path.split('/').filter(Boolean).map((name) => { acc += '/' + name; return `${icon('right')}<button type="button" data-clone-path="${esc(acc)}">${esc(name)}</button>`; }).join('')}</nav>`;
+        body.innerHTML = `<p class="muted">Lesender Browser für den temporären Klon. Änderungen erfolgen nur außerhalb dieser Ansicht.</p>${crumbs}<div class="zbg-table-wrap"><table class="zbg-table files"><thead><tr><th>Name</th><th>Größe</th><th>Geändert</th></tr></thead><tbody>${listing.path !== '/' ? `<tr><td colspan="3"><button type="button" class="fname dir" data-clone-path="${esc(listing.path.split('/').slice(0, -1).join('/') || '/')}">${icon('left')}Übergeordnetes Verzeichnis</button></td></tr>` : ''}${listing.entries.map((entry) => {
+          const p = (listing.path === '/' ? '' : listing.path) + '/' + entry.name;
+          return `<tr><td>${entry.type === 'dir' ? `<button type="button" class="fname dir" data-clone-path="${esc(p)}">${icon('folder')}<span>${esc(entry.name)}</span></button>` : `<span class="fname">${icon(entry.type === 'link' ? 'link' : 'file')}<span>${esc(entry.name)}</span></span>`}</td><td>${entry.type === 'dir' ? '–' : fmt.bytes(entry.size)}</td><td>${esc(fmt.dateFull(entry.mtime))}</td></tr>`;
+        }).join('') || '<tr><td colspan="3">Leerer Ordner</td></tr>'}</tbody></table></div>${listing.truncated ? '<p class="muted">Eintragsliste vom Server begrenzt.</p>' : ''}`;
+      } catch (e) {
+        if (closed || sequence !== ticket) return;
+        body.innerHTML = ui.empty('alert', 'Klon nicht lesbar', e.message) + `<button type="button" class="zbg-btn" data-clone-path="${esc(path)}">Erneut laden</button>`;
+      }
+    }
+    body.addEventListener('click', (event) => {
+      const button = event.target.closest('[data-clone-path]');
+      if (button) { event.preventDefault(); open(button.dataset.clonePath); }
+    });
+    await open('/');
+  };
 
   /* =================================================================== */
   /* Verlauf                                                              */
   /* =================================================================== */
 
-  const hist = (Z.state.hist = { list: null, job: '', result: '', open: null });
+  const hist = (Z.state.hist = { list: null, job: '', result: '', open: null, logs: {}, errors: {} });
   Z.views.history = {
     async enter(params) {
       if (params.job !== undefined) hist.job = params.job;
@@ -676,7 +806,7 @@
       const bytes = all.reduce((s, r) => s + (r.result === 'success' ? r.bytes || 0 : 0), 0);
       return `<div class="zbg-section-h"><h2>Verlauf</h2><div class="toolbar">
           <select class="zbg-select" data-input="histJob"><option value="">Alle Jobs</option>${jobs.map((j) => `<option value="${esc(j.job.id)}"${hist.job === j.job.id ? ' selected' : ''}>${esc(j.job.name)}</option>`).join('')}</select>
-          ${ui.seg('histResult', [{ value: '', label: 'Alle' }, { value: 'success', label: 'Erfolgreich' }, { value: 'failed', label: 'Fehler' }, { value: 'dry-run', label: 'Probeläufe' }], hist.result, { act: 'histResult' })}
+          ${ui.seg('histResult', [{ value: '', label: 'Alle' }, { value: 'success', label: 'Erfolgreich' }, { value: 'failed', label: 'Fehler' }, { value: 'dry-run', label: 'Probeläufe' }, { value: 'cancelled', label: 'Abgebrochen' }], hist.result, { act: 'histResult' })}
         </div></div>
         <div class="snap-stats wide">
           <div><span>Läufe</span><b>${all.length}</b></div>
@@ -698,9 +828,10 @@
   const RESULT = { success: ['Erfolgreich', 'ok', 'check'], failed: ['Fehlgeschlagen', 'err', 'x'], 'dry-run': ['Probelauf', 'info', 'flask'], cancelled: ['Abgebrochen', 'warn', 'stop'] };
   function histRow(r) {
     const [lbl, tone, ic] = RESULT[r.result] || ['Unbekannt', 'neutral', 'info'];
-    const job = Z.findJob ? Z.state.overview?.jobs.find((j) => j.job.id === r.job) : null;
-    const open = hist.open === r.id;
-    return `<tr class="hist-row${open ? ' open' : ''}" data-act="histOpen" data-id="${esc(r.id)}">
+    const job = Z.state.overview?.jobs.find((j) => j.job.id === r.job);
+    const key = `${r.job}:${r.id || r.runId}`;
+    const open = hist.open === key;
+    return `<tr class="hist-row${open ? ' open' : ''}">
         <td>${ui.dot(tone)}</td>
         <td><div class="two"><b>${esc(fmt.when(r.start))}</b><small>${esc(fmt.rel(r.start))}</small></div></td>
         <td>${esc(job ? job.job.name : r.job)}</td>
@@ -708,7 +839,7 @@
         <td class="num">${fmt.duration(r.duration)}</td>
         <td class="num">${fmt.bytes(r.bytes)}</td>
         <td class="num">${fmt.num(r.files)}</td>
-        <td>${icon(open ? 'down' : 'right')}</td>
+        <td>${ui.btn('', { act: 'histOpen', icon: open ? 'down' : 'right', title: open ? 'Details schließen' : 'Details und Log öffnen', data: { id: key } })}</td>
       </tr>${
         open
           ? `<tr class="hist-detail"><td colspan="8">
@@ -718,14 +849,42 @@
             ['Gelöscht (Retention)', esc(String(r.pruned ?? 0)) + ' Snapshots'],
             ['Ende', esc(fmt.dateFull(r.end))],
           ])}</div>
-          <pre class="zbg-term small">${(r.log || ['(kein Log gespeichert)']).map((l) => esc(l)).join('\n')}</pre></td></tr>`
+          ${checksumDetail(r)}
+          ${datasetDetail(r)}
+          ${hist.errors[key] ? `<p class="err" role="alert">${esc(hist.errors[key])}</p>${ui.btn('Log erneut laden', { act: 'histReload', icon: 'refresh', data: { id: key } })}` : ''}
+          <pre class="zbg-term small" tabindex="0" aria-label="Laufprotokoll">${esc(hist.logs[key] === undefined ? 'Log wird geladen …' : logText(hist.logs[key]) || 'Keine Log-Ausgabe gespeichert.')}</pre></td></tr>`
           : ''
       }`;
   }
-  Z.actions.histOpen = (el) => {
-    hist.open = hist.open === el.dataset.id ? null : el.dataset.id;
+  function checksumDetail(r) {
+    const check = r.verification;
+    if (!check?.checked) return `<p class="muted">${r.verify ? 'Prüfung angefordert; kein abgeschlossenes Ergebnis gespeichert.' : 'Keine abgeschlossene Prüfsummenprüfung für diesen Lauf.'}</p>`;
+    return `<div class="zbg-callout tone-${check.mismatches ? 'err' : 'ok'}">${icon(check.mismatches ? 'alert' : 'shieldCheck')}<div>Prüfsummenvergleich abgeschlossen: <b>${fmt.num(check.mismatches)} Abweichungen</b>.</div></div>`;
+  }
+  function datasetDetail(r) {
+    const datasets = Array.isArray(r.datasets) ? r.datasets : [];
+    if (!datasets.length) return '';
+    return `<h4>Datasets</h4><div class="zbg-table-wrap"><table class="zbg-table"><thead><tr><th>Dataset</th><th>Aktion</th><th>Bytes</th><th>Dateien</th><th>Prüfsummen</th></tr></thead><tbody>${datasets.map((d) => `<tr><td class="mono">${esc(d.dataset)}</td><td>${esc(d.action || 'copy')}</td><td>${fmt.bytes(d.bytes)}</td><td>${d.files == null ? '–' : fmt.num(d.files)}</td><td>${d.verification?.checked ? fmt.num(d.verification.mismatches) + ' Abweichungen' : 'nicht geprüft'}</td></tr>`).join('')}</tbody></table></div>`;
+  }
+  async function historyLog(key) {
+    const r = hist.list?.find((row) => `${row.job}:${row.id || row.runId}` === key);
+    if (!r) return;
+    delete hist.errors[key];
+    try {
+      hist.logs[key] = await Z.api('history.log', { id: r.job, run: r.id || r.runId });
+    } catch (e) {
+      hist.errors[key] = e.message;
+      hist.logs[key] = [];
+    }
+    if (Z.state.view === 'history') Z.render();
+  }
+  Z.actions.histOpen = async (el) => {
+    const key = el.dataset.id;
+    hist.open = hist.open === key ? null : key;
     Z.render();
+    if (hist.open && hist.logs[key] === undefined) await historyLog(key);
   };
+  Z.actions.histReload = (el) => historyLog(el.dataset.id);
   Z.actions.histJob = (el) => {
     hist.job = el.value;
     Z.render();
@@ -768,7 +927,7 @@
         <section class="zbg-card">
           <h3>${icon('terminal')}Kommandozeile</h3>
           <p class="muted">Das CLI liegt unter <code>/usr/local/emhttp/plugins/zfs-backup-guard/bin/zbg</code>.</p>
-          ${['zbg list', 'zbg datasets', 'zbg snapshots cache/appdata', 'zbg import']
+          ${['zbg list', 'zbg datasets', 'zbg snapshots cache/appdata', 'zbg run JOB-ID --dry-run', 'zbg run JOB-ID --verify', 'zbg check-age']
             .map((c) => `<div class="zbg-code" data-copy="${esc(c)}"><span>${esc(c)}</span>${ui.btn('', { act: 'copy', icon: 'copy', title: 'Kopieren' })}</div>`)
             .join('')}
         </section>
@@ -781,8 +940,7 @@
           <h3>${icon('shield')}Über</h3>
           ${ui.kv([
             ['Version', esc(ov.version || '–')],
-            ['Phase', `${esc(ov.phase || 1)} von 6`],
-            ['Runner', ov.runnerAvailable ? ui.badge('aktiv', 'ok') : ui.badge('folgt in Phase 2', 'idle')],
+            ['Runner', ov.runnerAvailable ? ui.badge('aktiv', 'ok') : ui.badge('nicht verfügbar', 'err')],
             ['Theme', esc(Z.cfg.unraidTheme || Z.cfg.theme)],
           ])}
         </section>
@@ -809,68 +967,41 @@
   /* =================================================================== */
 
   Z.actions.openMigration = async () => {
-    const layer = Z.modal({ title: `${icon('sparkles')} Aus User Scripts übernehmen`, size: 'lg', body: ui.skeleton(5) });
-    let found;
+    const layer = Z.modal({ title: `${icon('sparkles')} Aus User Scripts übernehmen`, size: 'lg', body: ui.skeleton(5), footer: ui.btn('Schließen', { act: 'closeLayer' }) });
     try {
-      found = await Z.api('migration.scan');
+      const found = await Z.api('migration.scan');
+      const existing = new Set((Z.state.overview?.jobs || []).map((j) => j.job.id));
+      layer.el.querySelector('.zbg-dialog-body').innerHTML = !found.length
+        ? ui.empty('search', 'Nichts gefunden', 'Es wurden keine erkennbaren Backup-Skripte gefunden.')
+        : `<div class="zbg-callout tone-warn">${icon('alert')}<div><b>Vor dem Aktivieren:</b> Den alten User-Script-Zeitplan manuell deaktivieren, Ziele und Konsistenz prüfen, einen Probelauf durchführen und den ersten Restore testen. Das Plugin ändert keine fremden Zeitpläne. Importierte Jobs bleiben pausiert.</div></div>` +
+          found.map((s) => {
+            const collision = s.proposals.some((p) => existing.has(p.id));
+            return `<section class="mig-script">
+              <header><b>${esc(s.script)}</b>${s.active ? ui.badge(s.schedule ? Z.cron.describe(s.schedule) : 'aktiv', 'warn', 'clock') : ui.badge('deaktiviert', 'idle')}</header>
+              <div class="mig-jobs">${s.proposals.map((p) => `<div class="mig-job"><div><b>${esc(p.source.dataset)}</b><span class="mono">${esc(p.target.path || p.target.dataset)}</span><small>${esc(p.target.mode === 'mirror' ? 'Spiegel' : 'versioniert')} · ${esc(Z.cron.describe(p.schedule))} · Snapshots ${esc(keepSummary(p))}</small>${p.migration?.oldTarget ? `<small>Altes Ziel: <span class="mono">${esc(p.migration.oldTarget)}</span></small>` : ''}${p.migration?.keepPath ? `<small>Der bisherige Spiegelpfad wird weiterverwendet. Bestehende Daten vor dem ersten Lauf prüfen.</small>` : '<small>Neuer Versionsordner; der alte Spiegel bleibt unangetastet.</small>'}${existing.has(p.id) ? '<small class="err">Job-ID bereits vorhanden – keine bestehenden Jobs überschreiben.</small>' : ''}</div></div>`).join('')}</div>
+              ${collision ? '<p class="err">Vor dem Import die kollidierende Job-ID im Editor umbenennen oder einen nicht mehr benötigten Job entfernen.</p>' : `<label class="zbg-check"><input type="checkbox" data-input="migReview"><span>Ich habe alle vorgeschlagenen Quellen, Ziele und Zeitpläne geprüft.</span></label>${ui.btn('Dieses Skript geprüft importieren', { act: 'migImport', kind: 'primary', icon: 'download', data: { script: s.script }, disabled: true })}`}
+              <p role="status" data-mig-result></p>
+            </section>`;
+          }).join('');
     } catch (e) {
-      Z.closeLayer(layer);
-      return Z.fail(e);
+      layer.el.querySelector('.zbg-dialog-body').innerHTML = ui.empty('alert', 'Migration fehlgeschlagen', e.message);
     }
-    const existing = new Set((Z.state.overview?.jobs || []).map((j) => j.job.id));
-    Z.state.migration = found;
-    const body = !found.length
-      ? ui.empty('search', 'Nichts gefunden', 'Es wurden keine erkennbaren Backup-Skripte im User-Scripts-Plugin gefunden.')
-      : found
-          .map(
-            (s, si) => `<section class="mig-script">
-          <header>${ui.dot(s.active ? 'ok' : 'idle')}<b>${esc(s.script)}</b>${s.active ? ui.badge(Z.cron.describe(s.schedule), 'ok', 'clock') : ui.badge('deaktiviert', 'idle')}<span class="muted">${s.kind === 'rsync-mirror' ? 'rsync-Spiegel (--delete)' : 'SpaceInvaderOne-Skript'}</span></header>
-          <div class="mig-jobs">${s.proposals
-            .map(
-              (p, pi) => `<label class="mig-job${existing.has(p.id) ? ' exists' : ''}">
-                <input type="checkbox" data-mig="${si}:${pi}"${existing.has(p.id) || !s.active ? '' : ' checked'}${existing.has(p.id) ? ' disabled' : ''}>
-                <div><b>${esc(p.source.dataset)}</b>
-                <span class="mono">${p.migration.keepPath ? esc(p.target.path) : `${p.migration.oldTarget ? `<s>${esc(p.migration.oldTarget)}</s> → ` : ''}${esc(p.target.path)}`}</span>
-                ${p.migration.keepPath ? `<span class="mig-keep">${icon('cloud')}Pfad bleibt gleich: ${esc(p.migration.downstream)} sichert weiter, nichts umzustellen</span>` : p.migration.oldTarget ? `<span class="mig-keep warn">${icon('info')}Wird bisher von keinem Zerobyte-Plan weitergesichert</span>` : ''}
-                <small>${existing.has(p.id) ? 'Bereits als Job vorhanden' : `${p.target.mode === 'mirror' ? 'Spiegel' : 'versioniert'} · ${esc(Z.cron.describe(p.schedule))} · Snapshots ${esc(keepSummary(p))}`}</small></div>
-                ${ui.btn('', { act: 'migEdit', icon: 'edit', title: 'Im Assistenten anpassen', data: { ref: `${si}:${pi}` } })}
-              </label>`
-            )
-            .join('')}</div></section>`
-          )
-          .join('') +
-        `<div class="zbg-callout tone-info">${icon('info')}<div><b>Was passiert?</b> Ziele, die Zerobyte bereits weitersichert, behalten ihren Pfad als Spiegel. Neu sind lokale ZFS-Snapshots mit Aufbewahrung, Konsistenz und Überwachung. Alle anderen Ziele bekommen einen versionierten Ordner. Den Zeitplan des User Scripts stellst du danach selbst auf „disabled“. Das Plugin ändert keine fremden Konfigurationen.</div></div>`;
-    layer.el.querySelector('.zbg-dialog-body').innerHTML = body;
-    const footer = document.createElement('footer');
-    footer.innerHTML = found.length ? ui.btn('Abbrechen', { act: 'closeLayer' }) + ui.btn('Ausgewählte Jobs anlegen', { act: 'migImport', kind: 'primary', icon: 'download' }) : ui.btn('Schließen', { act: 'closeLayer' });
-    layer.el.querySelector('.zbg-dialog').appendChild(footer);
   };
-  const migRef = (ref) => {
-    const [si, pi] = ref.split(':').map(Number);
-    return JSON.parse(JSON.stringify(Z.state.migration[si].proposals[pi]));
+  Z.actions.migReview = (el) => {
+    el.closest('.mig-script').querySelector('[data-act="migImport"]').disabled = !el.checked;
   };
-  Z.actions.migEdit = (el) => {
-    const p = migRef(el.dataset.ref);
-    delete p.migration;
-    Z.closeLayer();
-    Z.openEditor(p, null);
-  };
-  Z.actions.migImport = async () => {
-    const refs = Z.$$('[data-mig]:checked').map((i) => i.dataset.mig);
-    if (!refs.length) return Z.toast('Nichts ausgewählt', 'warn');
-    let n = 0;
-    for (const r of refs) {
-      const p = migRef(r);
-      delete p.migration;
-      try {
-        await Z.api('jobs.save', { job: p });
-        n++;
-      } catch (e) {
-        Z.fail(new Error(`${p.source.dataset}: ${e.message}`));
-      }
+  Z.actions.migImport = async (el) => {
+    const section = el.closest('.mig-script');
+    const output = section.querySelector('[data-mig-result]');
+    el.disabled = true;
+    try {
+      const jobs = await Z.api('migration.import', { script: el.dataset.script });
+      output.textContent = `${jobs.length} Jobs importiert und pausiert. Jetzt im Job-Editor prüfen, Probelauf ausführen und vor dem Aktivieren den alten User-Script-Zeitplan deaktivieren.`;
+      section.querySelector('[data-input="migReview"]').disabled = true;
+      await Z.loadOverview();
+    } catch (e) {
+      output.textContent = `Import fehlgeschlagen: ${e.message}`;
+      el.disabled = false;
     }
-    Z.closeLayer();
-    if (n) Z.toast(`${n} ${n === 1 ? 'Job' : 'Jobs'} angelegt. Bitte jetzt einen Probelauf machen.`);
-    Z.loadOverview();
   };
 })();

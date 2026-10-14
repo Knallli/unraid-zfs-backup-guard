@@ -16,6 +16,9 @@ find "$STAGE" -type f \( -name '*.php' -o -name '*.page' -o -name '*.js' -o -nam
 find "$STAGE" -type d -exec chmod 755 {} +
 find "$STAGE" -type f -exec chmod 644 {} +
 chmod 755 "$STAGE/usr/local/emhttp/plugins/$NAME/bin/zbg"
+if [ -d "$STAGE/usr/local/emhttp/plugins/$NAME/events" ]; then
+    find "$STAGE/usr/local/emhttp/plugins/$NAME/events" -type f -exec chmod 755 {} +
+fi
 
 mkdir -p dist
 tar --owner=0 --group=0 --numeric-owner --sort=name --mtime="@0" -C "$STAGE" -cJf "dist/$PKG" usr

@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Plugin>
+  <Name>ZFS Backup Guard</Name>
+  <PluginURL>https://raw.githubusercontent.com/Knallli/unraid-zfs-backup-guard/main/plugin/zfs-backup-guard.plg</PluginURL>
+  <Support>https://github.com/Knallli/unraid-zfs-backup-guard/issues</Support>
+  <Project>https://github.com/Knallli/unraid-zfs-backup-guard</Project>
+  <Overview>ZFS snapshots and retention, local or SSH rsync/ZFS replication, scheduled jobs, live status, age monitoring, checksum verification and safe file restoration for Unraid. Existing User Script backups can be imported disabled for a controlled cutover.</Overview>
+  <Category>Tools:Utilities</Category>
+</Plugin>

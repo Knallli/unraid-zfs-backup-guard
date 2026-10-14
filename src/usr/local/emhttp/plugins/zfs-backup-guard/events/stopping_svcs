@@ -1,0 +1,3 @@
+#!/bin/sh
+# Unraid waits for all backup workers to stop and recover their containers.
+exec /usr/bin/php /usr/local/emhttp/plugins/zfs-backup-guard/bin/zbg cancel-all

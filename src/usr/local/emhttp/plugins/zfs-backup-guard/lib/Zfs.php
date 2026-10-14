@@ -3,9 +3,7 @@ declare(strict_types=1);
 
 namespace ZBG;
 
-/**
- * Lesender Zugriff auf ZFS (Phase 1). Alle Werte werden mit -Hp in Rohzahlen gelesen.
- */
+/** ZFS inventory, exact atomic snapshots and ownership-checked retention. */
 final class Zfs
 {
     public const SNAP_PREFIX = 'zbg_';
@@ -346,6 +344,18 @@ final class Zfs
             $cmd[] = $dataset;
         }
         $out = Exec::ok($cmd, 120);
+        $propertyCommand = ['zfs', 'get', '-Hp', '-t', 'snapshot', '-s', 'local', '-o', 'name,value'];
+        if ($dataset !== null) {
+            array_push($propertyCommand, ...($recursive ? ['-r'] : ['-d', '1']));
+        }
+        $propertyCommand[] = self::JOB_PROP;
+        if ($dataset !== null) {
+            $propertyCommand[] = $dataset;
+        }
+        $localOwners = [];
+        foreach (Exec::rows(Exec::ok($propertyCommand, 120), ['name', 'job']) as $property) {
+            $localOwners[$property['name']] = $property['job'];
+        }
         $list = [];
         foreach (Exec::rows($out, ['name', 'used', 'refer', 'creation', 'job']) as $r) {
             [$ds, $snap] = explode('@', $r['name'], 2);
@@ -357,7 +367,7 @@ final class Zfs
                 'refer' => (int)$r['refer'],
                 'creation' => (int)$r['creation'],
                 'job' => $job,
-                'own' => self::isOwn($snap, $job),
+                'own' => self::isOwn($snap, $job) && ($localOwners[$r['name']] ?? null) === $job,
                 'kind' => self::classify($snap, $job),
             ];
         }
@@ -401,5 +411,66 @@ final class Zfs
             throw new UserError("Snapshot nicht gefunden: $dataset@$snapshot");
         }
         return $dir;
+    }
+
+    public static function refresh(): void
+    {
+        self::$datasetCache = self::$poolCache = null;
+    }
+
+    /** One ZFS transaction, without -r: exclusions are never snapshotted accidentally. */
+    public static function snapshotSelected(array $job, array $plan, string $snapshot): void
+    {
+        if (!self::isOwn($snapshot, $job['id'])) {
+            throw new UserError('Ungültiger eigener Snapshot-Name');
+        }
+        $cmd = ['zfs', 'snapshot', '-o', self::JOB_PROP . '=' . $job['id']];
+        foreach ($plan['items'] as $item) {
+            self::assertDataset($item['name']);
+            $name = $item['name'] . '@' . $snapshot;
+            if (strlen($name) > self::NAME_MAX) {
+                throw new UserError("Snapshot-Name ist zu lang: $name");
+            }
+            $cmd[] = $name;
+        }
+        if (count($cmd) === 4) {
+            throw new UserError('Keine Datasets ausgewählt');
+        }
+        Exec::ok($cmd, 120);
+    }
+
+    public static function destroyOwned(string $dataset, string $snapshot, string $job): void
+    {
+        self::assertDataset($dataset);
+        if (!self::isOwn($snapshot, $job)) {
+            throw new UserError('Fremder Snapshot wird nicht gelöscht');
+        }
+        $name = $dataset . '@' . $snapshot;
+        $property = explode("\t", trim(Exec::ok(['zfs', 'get', '-Hp', '-o', 'value,source', self::JOB_PROP, $name])));
+        if (($property[0] ?? '') !== $job || ($property[1] ?? '') !== 'local') {
+            throw new UserError("Snapshot hat keine lokale Eigentümerschaft: $name");
+        }
+        Exec::ok(['zfs', 'destroy', $name], 120);
+    }
+
+    public static function prune(array $job, array $plan, array $protected, callable $log, ?callable $cancel = null): void
+    {
+        foreach ($plan['items'] as $item) {
+            $items = [];
+            foreach (self::snapshots($item['name']) as $snapshot) {
+                if ($snapshot['own'] && $snapshot['job'] === $job['id']) {
+                    $items[] = ['name' => $snapshot['snapshot'], 'time' => $snapshot['creation']];
+                }
+            }
+            $protect = array_map(static fn($name) => str_contains($name, '@') ? explode('@', $name, 2)[1] : $name, $protected[$item['name']] ?? []);
+            $retention = Retention::plan($items, $job['snapshots']['keep'], $protect);
+            foreach ($retention['destroy'] as $name) {
+                if ($cancel !== null && $cancel()) {
+                    throw new \RuntimeException('Abgebrochen');
+                }
+                $log("Snapshot-Retention: {$item['name']}@$name");
+                self::destroyOwned($item['name'], $name, $job['id']);
+            }
+        }
     }
 }

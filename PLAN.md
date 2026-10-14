@@ -2,7 +2,7 @@
 
 Unraid-Plugin, das die ZFS-Backup-User-Scripts ablöst. Es bietet Snapshots mit Aufbewahrungsregeln, Replikation per rsync oder `zfs send` (lokal oder remote), Zeitplanung, Überwachung und Wiederherstellung, alles mit moderner Weboberfläche.
 
-Status: Phase 1 implementiert; Veröffentlichung 2026.10.14 enthält Übersicht, Konfiguration und lesende Analyse. Backup-Ausführung, aktive Zeitplanung und Wiederherstellung sind noch nicht verfügbar. Bestehende Backup-Skripte bleiben erforderlich.
+Status: Phasen 1–6 implementiert für 2026.10.14a: Runner, aktive Zeitplanung, lokale/SSH-Replikation, Retention, Prüfung und Wiederherstellung. Bestehende User-Script-Zeitpläne werden nicht automatisch deaktiviert; importierte Jobs bleiben bis zur bewussten Aktivierung ausgeschaltet. Der erste echte Lauf und ein Restore-Test müssen vor dem manuellen Abschalten der alten Backups erfolgreich sein.
 
 ---
 
@@ -179,8 +179,8 @@ Kein externes CDN, das Design passt sich an das Unraid-Theme an (hell/dunkel); A
 - `shellcheck` für die Skripte
 - **Unit-Tests für Retention** (Schaltjahre, Wochengrenzen, leere Listen, „neuester bleibt immer“, gemeinsamer Snapshot bleibt)
 - Pfad-Tests: Datasets mit Leerzeichen, verschachtelte und abweichende Mountpoints, `canmount=off`
-- Integrationstest auf dem Server mit einem **Wegwerf-Dataset** `cache/zbg-test` (nur nach Freigabe): Snapshot, rsync mirror/versioned, Retention, Restore, danach aufräumen
-- `zfs send`-Test lokal: `cache/zbg-test` nach `cache/zbg-test-recv`
+- Integrationstest auf dem Server: `php tests/integration.php cache --allow-zfs --ssh --docker-image=<lokales-Image>`. Er erzeugt ausschließlich zufällig benannte eigene Wegwerf-Datasets, eine isolierte Loopback-SSH-Instanz und optional einen eigenen Container; vorhandene Jobs und SSH-Identitäten bleiben unberührt.
+- Reale Mirror-/Hardlink-Versionierungs-, Restore-/Klon-, lokale/SSH-Send-, Resume-, verschlüsselte Raw-Stream- und Zvol-Szenarien; Bereinigung im `finally`-Block.
 - Fehlerfälle: Ziel nicht gemountet, voll, Abbruch mitten im Lauf, Container-Neustart nach Abbruch
 
 ---

@@ -16,7 +16,7 @@
     return `<div class="zbg-app">
       <header class="zbg-top">
         <div class="brand">
-          <div class="logo">${icon('shield')}<span class="logo-pulse"></span></div>
+          <div class="zbg-logo">${icon('shield')}<span class="logo-pulse"></span></div>
           <div><b>ZFS Backup Guard</b><small data-region="hdrSub">Snapshots · Replikation · Wiederherstellung</small></div>
         </div>
         <nav class="zbg-tabs" role="tablist">${TABS.map(([v, l, ic]) => `<button type="button" role="tab" class="zbg-tab" data-view="${v}" data-act="tab">${icon(ic)}<span>${l}</span></button>`).join('')}</nav>
@@ -35,9 +35,9 @@
       ? `<span class="zbg-pill tone-run">${icon('refresh', 'spin')}${running} läuft</span>`
       : bad
       ? `<span class="zbg-pill tone-err">${icon('alert')}${bad} Problem${bad > 1 ? 'e' : ''}</span>`
-      : ov.jobs.length
-      ? `<span class="zbg-pill tone-ok">${icon('check')}Alles ok</span>`
-      : '';
+      : ov.jobs.some((j) => j.status.state === 'ok')
+      ? `<span class="zbg-pill tone-ok">${icon('check')}Geschützte Jobs vorhanden</span>`
+      : ov.jobs.length ? `<span class="zbg-pill tone-idle">${icon('shield')}Noch kein aktiver Schutz bestätigt</span>` : '';
     return `${pill}${ui.btn('', { act: 'reloadAll', icon: 'refresh', title: 'Aktualisieren' })}${ui.btn('', { act: 'toggleTheme', icon: Z.root().dataset.theme === 'dark' ? 'sparkles' : 'snowflake', title: 'Hell/Dunkel (nur Vorschau)' })}`;
   };
   Z.updateHeader = () => Z.refresh('hdrAct');
@@ -57,6 +57,19 @@
     Z.updateHeader();
   };
 
+  let overviewTimer = null;
+  Z.scheduleOverviewRefresh = () => {
+    clearTimeout(overviewTimer);
+    overviewTimer = null;
+    if (document.hidden || Z.state.view !== 'overview') return;
+    overviewTimer = setTimeout(async () => {
+      overviewTimer = null;
+      if (!document.hidden && Z.state.view === 'overview' && !Z.topLayer()) await Z.loadOverview();
+      else Z.scheduleOverviewRefresh();
+    }, 60000);
+  };
+  document.addEventListener('visibilitychange', () => Z.scheduleOverviewRefresh());
+  window.addEventListener('pagehide', () => clearTimeout(overviewTimer));
   function boot() {
     const root = Z.root();
     if (!root) return;
@@ -73,10 +86,7 @@
     });
     Z.state.view = initial === 'overview' ? 'overview' : initial;
     Z.render();
-    // Übersicht alle 60 s still aktualisieren (relative Zeiten, Status)
-    setInterval(() => {
-      if (!document.hidden && Z.state.view === 'overview' && !Z.topLayer()) Z.loadOverview();
-    }, 60000);
+    Z.scheduleOverviewRefresh();
   }
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot);

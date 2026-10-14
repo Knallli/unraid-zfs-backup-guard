@@ -22,24 +22,31 @@
 
   /* ---------- API ---------- */
   Z.api = async function (action, payload = {}) {
-    if (typeof window.ZBG_MOCK === 'function') {
+    if (cfg.csrf === 'dev' && typeof window.ZBG_MOCK === 'function') {
       return window.ZBG_MOCK(action, JSON.parse(JSON.stringify(payload)));
     }
     const body = new URLSearchParams({ action, payload: JSON.stringify(payload), csrf_token: cfg.csrf });
-    let res;
+    const bounded = ['run.status', 'run.log', 'history.log'].includes(action);
+    const controller = bounded ? new AbortController() : null;
+    const timeout = controller ? setTimeout(() => controller.abort(), 20000) : null;
     try {
-      res = await fetch(cfg.api, { method: 'POST', body, credentials: 'same-origin' });
-    } catch (e) {
-      throw new Error('Server nicht erreichbar');
+      let res;
+      try {
+        res = await fetch(cfg.api, { method: 'POST', body, credentials: 'same-origin', ...(controller ? { signal: controller.signal } : {}) });
+      } catch (e) {
+        throw new Error(controller?.signal.aborted ? 'Statusabfrage hat das Zeitlimit überschritten' : 'Server nicht erreichbar');
+      }
+      let json;
+      try {
+        json = await res.json();
+      } catch (e) {
+        throw new Error(controller?.signal.aborted ? 'Statusabfrage hat das Zeitlimit überschritten' : `Ungültige Antwort (${res.status})`);
+      }
+      if (!res.ok || !json.ok) throw new Error(json.error || `Fehler ${res.status}`);
+      return json.data;
+    } finally {
+      clearTimeout(timeout);
     }
-    let json;
-    try {
-      json = await res.json();
-    } catch (e) {
-      throw new Error(`Ungültige Antwort (${res.status})`);
-    }
-    if (!json.ok) throw new Error(json.error || `Fehler ${res.status}`);
-    return json.data;
   };
 
   /* ---------- Hilfen ---------- */
@@ -314,7 +321,11 @@
     main.dataset.key = key;
     main.innerHTML = v.render();
     v.mounted && v.mounted(main);
-    Z.$$('.zbg-tab').forEach((t) => t.classList.toggle('active', t.dataset.view === Z.state.view));
+    Z.$$('.zbg-tab').forEach((t) => {
+      const active = t.dataset.view === Z.state.view;
+      t.classList.toggle('active', active);
+      t.setAttribute('aria-selected', String(active));
+    });
   };
 
   /** Nur einen Teilbereich neu zeichnen (data-region="name"). */
@@ -327,6 +338,7 @@
   };
 
   Z.go = function (view, params) {
+    Z.views[Z.state.view]?.leave?.();
     Z.state.view = view;
     Z.state.params = params || {};
     const hash = '#' + view + (params && params.q ? '/' + encodeURIComponent(params.q) : '');
@@ -334,7 +346,9 @@
     Z.render();
     const top = Z.root();
     if (top && top.getBoundingClientRect().top < 0) top.scrollIntoView({ behavior: 'smooth' });
-    Z.views[view]?.enter && Z.views[view].enter(params || {});
+    Promise.resolve(Z.views[view]?.enter?.(params || {})).catch(Z.fail);
+    Z.pollRuns?.();
+    Z.scheduleOverviewRefresh?.();
   };
 
   Z.bindEvents = function (root) {
@@ -345,14 +359,14 @@
       if (fn) {
         // Checkboxen und Radios behalten ihr natives Umschalten
         if (el.tagName !== 'INPUT') ev.preventDefault();
-        fn(el, ev);
+        Promise.resolve().then(() => fn(el, ev)).catch(Z.fail);
       }
     });
     const onInput = (ev) => {
       const el = ev.target.closest('[data-bind]');
-      if (el && Z.onBind) Z.onBind(el, ev);
+      if (el && Z.onBind) Promise.resolve().then(() => Z.onBind(el, ev)).catch(Z.fail);
       const act = ev.target.closest('[data-input]');
-      if (act && Z.actions[act.dataset.input]) Z.actions[act.dataset.input](act, ev);
+      if (act && Z.actions[act.dataset.input]) Promise.resolve().then(() => Z.actions[act.dataset.input](act, ev)).catch(Z.fail);
     };
     root.addEventListener('input', onInput); // feuert auch für Checkbox, Radio und Select
   };

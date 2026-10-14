@@ -235,7 +235,7 @@
   color: var(--muted);
   font-size: 12px;
 }
-.zbg .logo {
+.zbg .zbg-logo {
   position: relative;
   width: 38px;
   height: 38px;
@@ -246,7 +246,7 @@
   color: #fff;
   box-shadow: 0 6px 18px rgba(20, 180, 170, 0.35);
 }
-.zbg .logo .zi {
+.zbg .zbg-logo .zi {
   width: 21px;
   height: 21px;
   stroke-width: 2.2;
@@ -256,6 +256,7 @@
   inset: 0;
   border-radius: inherit;
   animation: zbg-pulse 2.8s infinite;
+  pointer-events: none;
 }
 .zbg-tabs {
   display: flex;
@@ -903,6 +904,9 @@
   display: none;
 }
 .zbg .run-strip {
+  display: block;
+  width: 100%;
+  text-align: left;
   padding: 10px 12px;
   border-radius: 11px;
   background: color-mix(in srgb, var(--run) 9%, transparent);
@@ -3516,3 +3520,42 @@ body.zbg-noscroll .zbg .zbg-toasts {
   height: 14px;
 }
 .zbg .ds-tree.big { position: relative; }
+.zbg .sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+.zbg select:focus-visible,
+.zbg textarea:focus-visible,
+.zbg pre[tabindex]:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.zbg .run-strip .rs-f {
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.zbg [data-live-error]:empty,
+.zbg [data-restore-error]:empty,
+.zbg [data-mig-result]:empty {
+  display: none;
+}
+.zbg .rs-side .zbg-btn {
+  max-width: 100%;
+  white-space: normal;
+}
+.zbg .rs-side .zbg-kv dd,
+.zbg .hist-detail .zbg-kv dd {
+  overflow-wrap: anywhere;
+}
+.zbg .mig-script > .zbg-check,
+.zbg .mig-script > .zbg-btn,
+.zbg .mig-script > p {
+  margin: 12px;
+}
