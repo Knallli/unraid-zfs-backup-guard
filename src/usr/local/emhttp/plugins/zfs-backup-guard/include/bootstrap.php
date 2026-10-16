@@ -4,7 +4,7 @@ declare(strict_types=1);
 namespace ZBG;
 
 const PLUGIN = 'zfs-backup-guard';
-const VERSION = '2026.10.16b';
+const VERSION = '2026.10.16c';
 
 /** Persistente Konfiguration auf dem Flash. Für Tests per ZBG_CONFIG_DIR überschreibbar. */
 function configDir(): string
