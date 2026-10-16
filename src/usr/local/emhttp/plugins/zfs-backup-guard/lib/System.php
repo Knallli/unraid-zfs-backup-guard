@@ -37,6 +37,11 @@ final class System
                 if ($type === 'disk') {
                     $disk = $name;
                 }
+                // Unraid-Array: LUKS liegt auf /dev/mdNp1 (fstype leer, geöffnetes crypt-Kind), sdX1 hat keinen /dev-Knoten
+                $opened = array_filter((array)($n['children'] ?? []), static fn($c) => ($c['type'] ?? '') === 'crypt') !== [];
+                if ($type === 'md' && $opened) {
+                    $out['luks'][] = $name;
+                }
                 if ($type === 'part' || $type === 'disk') {
                     $boot = in_array($disk, $bootDisks, true);
                     $label = (string)($n['partlabel'] ?? '');
@@ -46,7 +51,7 @@ final class System
                     if ($type === 'part' && $boot && (strtolower((string)($n['parttype'] ?? '')) === self::EFI_TYPE || ($fs === 'vfat' && $label === 'EFI System Partition'))) {
                         $out['efi'][] = $name;
                     }
-                    if ($fs === 'crypto_LUKS') {
+                    if ($fs === 'crypto_LUKS' || $opened) {
                         $out['luks'][] = $name;
                     }
                 }
@@ -145,18 +150,25 @@ final class System
                 $log('WARNUNG: EFI-Partition ' . $p . ': ' . $e->getMessage());
             }
         }
+        $saved = [];
         foreach ($sel['luks'] as $p) {
-            $uuid = preg_replace('~[^A-Za-z0-9-]~', '', (string)($flat[$p]['uuid'] ?? '')) ?: 'unbekannt';
+            if (!file_exists('/dev/' . $p)) {
+                $log("Systemdisk: /dev/$p nicht vorhanden (Array-Disk, Header über md gesichert), übersprungen");
+                continue;
+            }
+            $uuid = preg_replace('~[^A-Za-z0-9-]~', '', (string)($flat[$p]['uuid'] ?? '') ?: trim(Exec::run(['cryptsetup', 'luksUUID', '/dev/' . $p])['out'])) ?: 'unbekannt';
             $base = "$dir/luks/{$p}_$uuid";
             Exec::ok(['cryptsetup', 'luksHeaderBackup', '/dev/' . $p, '--header-backup-file', "$base.img"]);
             chmod("$base.img", 0600);
             $dump = Exec::run(['cryptsetup', 'luksDump', '/dev/' . $p]);
             $put("luks/{$p}_$uuid.txt", $dump['code'] === 0 ? $dump['out'] : "FEHLER: {$dump['err']}\n");
+            $saved[$p] = $uuid;
         }
+        $sel['luks'] = array_keys($saved);
         foreach (['info', 'partitions', 'bios', 'efi', 'luks'] as $sub) {
             chmod("$dir/$sub", 0700);
         }
-        $put('WIEDERHERSTELLEN.md', self::guide($disks, $flat, $pool, $sel));
+        $put('WIEDERHERSTELLEN.md', self::guide($disks, $flat, $pool, $sel, $saved));
         $log(sprintf('Systemdisk: %d Boot-Disk(s), %d EFI, %d BIOS, %d LUKS-Header', count($disks), count($sel['efi']), count($sel['bios']), count($sel['luks'])));
         return ['bootDisks' => $disks, 'pool' => $pool] + $sel;
     }
@@ -185,7 +197,7 @@ final class System
         }
     }
 
-    private static function guide(array $disks, array $flat, ?string $pool, array $sel): string
+    private static function guide(array $disks, array $flat, ?string $pool, array $sel, array $saved): string
     {
         $md = "# Systemdisk wiederherstellen\n\nErzeugt von ZFS Backup Guard am " . date('Y-m-d H:i:s') . ".\n\n## Dieses System\n\n";
         $md .= '- Boot-Pool: ' . ($pool ?? 'keiner (USB-Flash)') . "\n";
@@ -195,8 +207,8 @@ final class System
         foreach ($sel['efi'] as $p) {
             $md .= "- EFI-Partition: /dev/$p, Dateien in `efi/$p/`\n";
         }
-        foreach ($sel['luks'] as $p) {
-            $md .= "- LUKS: /dev/$p (UUID " . ($flat[$p]['uuid'] ?? '?') . "), Header in `luks/`\n";
+        foreach ($saved as $p => $uuid) {
+            $md .= "- LUKS: /dev/$p (UUID $uuid), Header `luks/{$p}_$uuid.img`\n";
         }
         $disk = $disks[0] ?? 'DISK';
         $md .= <<<MD
@@ -212,6 +224,7 @@ final class System
 4. LUKS-Header nur bei beschädigtem Header zurückspielen:
    `cryptsetup luksHeaderRestore /dev/<Gerät> --header-backup-file luks/<Gerät>_<UUID>.img`
    WARNUNG: Nur auf das exakt richtige Gerät anwenden und vorher die UUID mit `luks/<Gerät>_<UUID>.txt` vergleichen. Ein falscher Header macht Daten unlesbar.
+   Array-Disks (`mdNp1`): bei gestartetem Array über `/dev/mdNp1`, bei gestopptem Array über die Partition der Disk (`/dev/sdX1`); die Zuordnung steht in `info/lsblk.json`, die UUID muss passen.
 5. Die LUKS-Header-Backups zusammen mit der Passphrase geben Zugriff auf die Daten. Das Backup-Ziel entsprechend geschützt halten.
 
 MD;

@@ -273,8 +273,9 @@ $lsblk = json_decode('{"blockdevices":[
   {"name":"nvme0n1p3","type":"part","fstype":"zfs_member","partlabel":"Unraid Boot Partition"},
   {"name":"nvme0n1p4","type":"part","fstype":"crypto_LUKS","children":[{"name":"nvme0n1p4","type":"crypt","fstype":"zfs_member"}]}]},
  {"name":"sda","type":"disk","children":[{"name":"sda1","type":"part","fstype":"crypto_LUKS"}]},
- {"name":"md1p1","type":"md","fstype":"xfs"}]}', true)['blockdevices'];
-eq('System: Geräteauswahl', System::select($lsblk, ['nvme0n1']), ['bios' => ['nvme0n1p1'], 'efi' => ['nvme0n1p2'], 'luks' => ['nvme0n1p4', 'sda1']]);
+ {"name":"md1p1","type":"md","fstype":null,"children":[{"name":"md1p1","type":"crypt","fstype":"xfs"}]},
+ {"name":"md9p1","type":"md","fstype":"xfs"}]}', true)['blockdevices'];
+eq('System: Geräteauswahl (Array-LUKS über md, nicht über versteckte sdX1)', System::select($lsblk, ['nvme0n1']), ['bios' => ['nvme0n1p1'], 'efi' => ['nvme0n1p2'], 'luks' => ['nvme0n1p4', 'sda1', 'md1p1']]);
 eq('System: Boot-Disks aus zpool status', System::bootDisks("  pool: flash\n\tNAME  STATE\n\tflash  ONLINE\n\t  mirror-0  ONLINE\n\t    /dev/nvme1n1p3  ONLINE  0 0 0\n\t    /dev/nvme0n1p3  ONLINE  0 0 0\n", static fn(string $d): string => preg_replace('~p\d+$~', '', $d)), ['nvme1n1', 'nvme0n1']);
 eq('Job: Slug Umlaute', Job::slug('Über Größe'), 'ueber-groesse');
 throws('Job: Ziel in Quelle', static fn() => Job::normalize(['target' => ['path' => '/mnt/cache/appdata/backup']] + $base));
