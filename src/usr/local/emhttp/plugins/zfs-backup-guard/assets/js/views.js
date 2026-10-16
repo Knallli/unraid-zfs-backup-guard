@@ -635,6 +635,7 @@
             ${ui.btn('', { act: 'browseSnap', icon: 'search', title: 'Durchsuchen', data: { ds: s.dataset, snap: s.snapshot } })}
             ${ui.btn('', { act: 'rollbackHint', icon: 'restore', title: 'Rollback-Befehl anzeigen', data: { ds: s.dataset, snap: s.snapshot } })}
             ${ui.btn('', { act: 'cloneSnap', icon: 'copy', title: 'Temporären Klon erstellen', data: { ds: s.dataset, snap: s.snapshot } })}
+            ${s.own ? ui.btn('', { act: 'destroySnap', icon: 'trash', title: 'Snapshot löschen', kind: 'danger-ghost', data: { ds: s.dataset, snap: s.snapshot } }) : ''}
           </td></tr>`;
       })
       .join('');
@@ -709,6 +710,21 @@
   Z.actions.browseSnapClose = (el) => {
     Z.closeLayer();
     Z.actions.browseSnap(el);
+  };
+  Z.actions.destroySnap = async (el) => {
+    const dataset = el.dataset.ds;
+    const snapshot = el.dataset.snap;
+    if (!await Z.confirm({ title: 'Snapshot löschen?', text: `<b class="mono">${esc(dataset)}@${esc(snapshot)}</b> wird endgültig gelöscht. Backups im Ziel bleiben erhalten.`, ok: 'Löschen', icon: 'trash' })) return;
+    el.disabled = true;
+    try {
+      await Z.api('snapshots.destroy', { dataset, snapshot });
+      snap.list = (snap.list || []).filter((s) => !(s.dataset === dataset && s.snapshot === snapshot));
+      Z.state.overview = null;
+      Z.refresh('snaplist');
+      Z.toast('Snapshot gelöscht');
+    } finally {
+      el.disabled = false;
+    }
   };
   Z.actions.cloneSnap = async (el) => {
     const dataset = el.dataset.ds;

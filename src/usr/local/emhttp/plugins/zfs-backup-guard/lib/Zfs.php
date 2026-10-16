@@ -453,6 +453,28 @@ final class Zfs
         Exec::ok(['zfs', 'destroy', $name], 120);
     }
 
+    /** Löschen aus der Oberfläche: nur eigene Snapshots, nie während der Job läuft, nie die ZFS-Replikationsbasis. */
+    public static function destroyByUser(string $dataset, string $snapshot): void
+    {
+        $own = array_values(array_filter(self::snapshots($dataset), static fn($s) => $s['own']));
+        $hit = current(array_filter($own, static fn($s) => $s['snapshot'] === $snapshot)) ?: null;
+        if ($hit === null) {
+            throw new UserError('Nur eigene Snapshots von Backup Guard können gelöscht werden');
+        }
+        $lock = RunState::lockJob($hit['job'], true);
+        try {
+            $job = current(array_filter(JobStore::all(), static fn($j) => $j['id'] === $hit['job'])) ?: null;
+            $jobSnaps = array_values(array_filter($own, static fn($s) => $s['job'] === $hit['job']));
+            // ponytail: schützt nur den neuesten Snapshot; ein älterer Resume-Basis-Snapshot nach Abbruch wird nicht erkannt
+            if (($job['method'] ?? '') === 'zfs' && end($jobSnaps)['snapshot'] === $snapshot) {
+                throw new UserError('Der neueste Snapshot ist die Basis der nächsten inkrementellen Replikation und bleibt erhalten');
+            }
+            self::destroyOwned($dataset, $snapshot, $hit['job']);
+        } finally {
+            fclose($lock);
+        }
+    }
+
     public static function prune(array $job, array $plan, array $protected, callable $log, ?callable $cancel = null): void
     {
         foreach ($plan['items'] as $item) {

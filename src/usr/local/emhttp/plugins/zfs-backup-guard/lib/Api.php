@@ -33,6 +33,7 @@ final class Api
             'versions' => Versions::list(JobStore::get(self::str($p, 'id'))),
             'browse.version' => Browse::version(self::str($p, 'job'), self::str($p, 'version'), (string)($p['path'] ?? '')),
             'restore' => Restore::copy($p),
+            'snapshots.destroy' => Zfs::destroyByUser(self::str($p, 'dataset'), self::str($p, 'snapshot')) ?? true,
             'snapshots.clone' => Restore::clone(self::str($p, 'dataset'), self::str($p, 'snapshot')),
             'clones.list' => Restore::clones(),
             'clones.remove' => Restore::removeClone(self::str($p, 'dataset')) ?? true,

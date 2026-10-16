@@ -269,6 +269,8 @@
         clones.push(c);
         return clone(c);
       }
+      case 'snapshots.destroy':
+        return true;
       case 'clones.list':
         return clone(clones);
       case 'clones.remove': {
