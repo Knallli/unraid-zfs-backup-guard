@@ -49,7 +49,7 @@ Snapshots können in temporäre, ausdrücklich dem Plugin zugeordnete Datasets g
 
 ## Migration
 
-Der Assistent erkennt bestehende User-Script-Backups und importiert Jobs atomar **deaktiviert**. Bereits durch Zerobyte weitergesicherte Spiegel können ihren bisherigen Pfad behalten; sonst wird ein neuer Versionspfad vorgeschlagen. Vorhandene Spiegel und User-Script-Dateien/Zeitpläne werden nicht gelöscht oder verändert.
+Der Assistent erkennt bestehende User-Script-Backups und importiert Jobs atomar **deaktiviert**. Jeder Job wird in einen neuen Unterordner (versioniert) importiert; andere Backup-Tools werden nicht erkannt. Vorhandene Spiegel und User-Script-Dateien/Zeitpläne werden nicht gelöscht oder verändert.
 
 1. Vorschläge prüfen, Quellen/Ziele und Konsistenz anpassen.
 2. Probelauf, echter Testlauf und Dateiwiederherstellung prüfen.
@@ -101,7 +101,7 @@ php tests/integration.php cache --allow-zfs --ssh
 php tests/integration.php cache --allow-zfs --ssh --docker-image=alpine:latest
 ```
 
-Der Build benötigt GNU tar, xz und GNU-Kommandozeilenwerkzeuge und erzeugt ein deterministisches Slackware-Paket unter `dist/`; Version und Paket-MD5 werden in der `.plg` aktualisiert. Fixture-Tests benötigen SQLite3 für die Zerobyte-Fälle und nutzen keine echten ZFS-Datasets. Integrationstests benötigen root/OpenZFS und erstellen ausschließlich zufällig benannte Test-Datasets im angegebenen Pool; sie räumen diese anschließend auf. `--ssh` startet einen eigenen Loopback-SSHD mit eigenen Schlüsseln, ohne produktive SSH-Identitäten zu ändern. Docker-Tests verwenden ausschließlich einen eigens angelegten Testcontainer und ziehen keine Images nach.
+Der Build benötigt GNU tar, xz und GNU-Kommandozeilenwerkzeuge und erzeugt ein deterministisches Slackware-Paket unter `dist/`; Version und Paket-MD5 werden in der `.plg` aktualisiert. Fixture-Tests nutzen keine echten ZFS-Datasets. Integrationstests benötigen root/OpenZFS und erstellen ausschließlich zufällig benannte Test-Datasets im angegebenen Pool; sie räumen diese anschließend auf. `--ssh` startet einen eigenen Loopback-SSHD mit eigenen Schlüsseln, ohne produktive SSH-Identitäten zu ändern. Docker-Tests verwenden ausschließlich einen eigens angelegten Testcontainer und ziehen keine Images nach.
 
 Die Entwicklungsoberfläche `dev/` verwendet ausdrücklich Mock-Daten. Die reale Unraid-Oberfläche muss separat geprüft werden.
 

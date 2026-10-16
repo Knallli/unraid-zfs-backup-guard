@@ -7,11 +7,10 @@ declare(strict_types=1);
  */
 
 putenv('ZBG_CONFIG_DIR=' . sys_get_temp_dir() . '/zbg-test-config-' . getmypid());
-putenv('ZBG_ZEROBYTE_DB=' . sys_get_temp_dir() . '/zbg-test-zerobyte-' . getmypid() . '.db');
 date_default_timezone_set('Europe/Berlin');
 require __DIR__ . '/../src/usr/local/emhttp/plugins/zfs-backup-guard/include/bootstrap.php';
 
-use ZBG\{Cron, Downstream, History, Job, JobStore, Paths, Retention, RunState, System, UserError, UserScripts, Zfs};
+use ZBG\{Cron, History, Job, JobStore, Paths, Retention, RunState, System, UserError, UserScripts, Zfs};
 
 $failures = 0;
 $count = 0;
@@ -287,35 +286,6 @@ throws('Job: zfs-Ziel in Quelle', static fn() => Job::normalize(['method' => 'zf
 throws('Job: SSH-Host mit Shell-Zeichen', static fn() => Job::normalize(['target' => ['path' => '/mnt/user/b/x', 'ssh' => ['host' => 'a;rm -rf /']]] + $base));
 eq('Job: Boot als Quelle erlaubt', Job::normalize(['name' => 'Boot', 'source' => ['dataset' => 'flash/boot'], 'target' => ['path' => '/mnt/user/backup/zfs/boot']])['source']['dataset'], 'flash/boot');
 eq('Job: Retention gekappt', Job::normalize(['snapshots' => ['keep' => ['daily' => 99999]]] + $base)['snapshots']['keep']['daily'], 1000);
-
-/* ------------------------------------------------------------------ */
-/* Zerobyte-Erkennung (Test-Datenbank im echten Schema-Ausschnitt)     */
-/* ------------------------------------------------------------------ */
-
-if (class_exists(SQLite3::class)) {
-    $dbf = getenv('ZBG_ZEROBYTE_DB');
-    @unlink($dbf);
-    $db = new SQLite3($dbf);
-    $db->exec("CREATE TABLE volumes_table (id INTEGER PRIMARY KEY, name TEXT, type TEXT, config TEXT);
-        CREATE TABLE backup_schedules_table (id INTEGER PRIMARY KEY, name TEXT, volume_id INTEGER, enabled INTEGER, cron_expression TEXT,
-            include_paths TEXT, retention_policy TEXT, last_backup_status TEXT, last_backup_at INTEGER);
-        INSERT INTO volumes_table VALUES (1, 'backup-directory', 'directory', '{\"backend\":\"directory\",\"path\":\"/mnt/user/backup\"}');
-        INSERT INTO volumes_table VALUES (2, 'nas', 'smb', '{\"backend\":\"smb\",\"password\":\"geheim\",\"path\":\"/x\"}');
-        INSERT INTO backup_schedules_table VALUES (1, 'AppData Daily', 1, 1, '00 05 * * *', '[\"/zfs-test/appdata\",\"/zfs-test/domains\",\"/zfs-test/lxc\"]', '{\"keepDaily\":7}', 'success', 1760000000000);
-        INSERT INTO backup_schedules_table VALUES (2, 'SMB', 2, 1, '0 1 * * *', '[]', '{}', 'success', 0);");
-    $db->close();
-    $plans = Downstream::plans();
-    eq('Zerobyte: nur Verzeichnis-Volumes', count($plans), 1);
-    check('Zerobyte: keine Zugangsdaten gelesen', !str_contains(json_encode($plans), 'geheim'));
-    eq('Zerobyte: Ziel appdata erfasst', Downstream::forTarget('/mnt/user/backup/zfs-test/appdata')[0]['name'] ?? null, 'AppData Daily');
-    eq('Zerobyte: Unterordner voll erfasst', Downstream::forTarget('/mnt/user/backup/zfs-test/appdata/current')[0]['coverage'] ?? null, 'full');
-    eq('Zerobyte: main nicht erfasst', Downstream::forTarget('/mnt/user/backup/zfs-test/main'), []);
-    eq('Zerobyte: Elternordner nur teilweise', Downstream::forTarget('/mnt/user/backup/zfs-test')[0]['coverage'] ?? null, 'partial');
-    eq('Zerobyte: Zeitstempel ms → s', $plans[0]['lastAt'], 1760000000);
-    @unlink($dbf);
-} else {
-    echo "(SQLite3 fehlt – Zerobyte-Tests übersprungen)\n";
-}
 
 /* ------------------------------------------------------------------ */
 /* Migration                                                           */

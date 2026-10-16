@@ -86,14 +86,6 @@
       return `${(v < 10 && i > 0 ? nf1 : nf0).format(v)} ${u[i]}`;
     },
     num: (n) => nf0.format(n ?? 0),
-    /** restic/Zerobyte-Retention {keepDaily:5,keepMonthly:3} → „5 T · 3 M“ */
-    retention(r) {
-      const L = { keepLast: 'letzte', keepHourly: 'h', keepDaily: 'T', keepWeekly: 'W', keepMonthly: 'M', keepYearly: 'J' };
-      return Object.entries(r || {})
-        .filter(([k, v]) => L[k] && v)
-        .map(([k, v]) => (k === 'keepLast' ? `letzte ${v}` : `${v} ${L[k]}`))
-        .join(' · ') || 'ohne Aufbewahrung';
-    },
     pct: (n) => `${nf0.format(n ?? 0)} %`,
     rate: (bps) => (bps ? `${Z.fmt.bytes(bps)}/s` : '–'),
     duration(sec) {

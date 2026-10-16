@@ -114,7 +114,7 @@ final class Paths
             if ($mount && $mount['type'] === 'zfs' && explode('/', $mount['device'])[0] === $srcPool) {
                 [$samePool, $why] = [true, "liegt direkt auf Pool $srcPool"];
             }
-            $share = Downstream::shareInfo($path);
+            $share = self::shareInfo($path);
             if (!$samePool && $share && in_array($share['useCache'] ?? 'no', ['yes', 'only', 'prefer'], true)
                 && in_array($srcPool, [$share['pool'] ?? null, $share['pool2'] ?? null], true)) {
                 [$samePool, $why] = [true, "Share „{$share['share']}“ nutzt Pool $srcPool (Cache: {$share['useCache']})"];
@@ -127,13 +127,27 @@ final class Paths
                 $checks[] = ['ok' => $enough, 'warn' => !$enough, 'label' => 'Freier Platz ' . self::human($free) . ' (Quelle ' . self::human($ds['used']) . ')'];
             }
         }
-        $downstream = Downstream::forTarget($path);
-        foreach ($downstream as $d) {
-            $checks[] = ['ok' => true, 'info' => true, 'label' => "Wird von {$d['tool']}-Plan „{$d['name']}“ weitergesichert (" . $d['cron'] . ($d['coverage'] === 'partial' ? ', nur teilweise' : '') . ')'];
-        }
         return [
             'path' => $path, 'exists' => is_dir($path), 'mounted' => $mounted, 'writable' => $writable,
-            'free' => $free, 'fs' => $mount['type'] ?? null, 'checks' => $checks, 'downstream' => $downstream,
+            'free' => $free, 'fs' => $mount['type'] ?? null, 'checks' => $checks,
+        ];
+    }
+
+    /** Ungefähre Übersetzung von /mnt/user/<share>/… auf Unraid-Share-Einstellungen. */
+    private static function shareInfo(string $path): ?array
+    {
+        if (!preg_match('~^/mnt/user/([^/]+)~', $path, $m)) {
+            return null;
+        }
+        $cfg = @parse_ini_file('/boot/config/shares/' . $m[1] . '.cfg') ?: [];
+        if (!$cfg) {
+            return ['share' => $m[1]];
+        }
+        return [
+            'share' => $m[1],
+            'useCache' => $cfg['shareUseCache'] ?? 'no',
+            'pool' => $cfg['shareCachePool'] ?? null,
+            'pool2' => $cfg['shareCachePool2'] ?? null,
         ];
     }
 

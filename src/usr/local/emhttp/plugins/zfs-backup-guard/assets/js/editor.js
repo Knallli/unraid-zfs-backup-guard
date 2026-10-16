@@ -106,21 +106,6 @@
     Z.$('[data-region="edFoot"]', ed.layer.el).innerHTML = footer();
     AFTER[STEPS[ed.step].key]?.();
   }
-  function renderStepKeepFocus() {
-    const f = document.activeElement;
-    const bind = f && f.dataset ? f.dataset.bind : null;
-    const pos = f && f.selectionStart;
-    renderStep();
-    if (bind) {
-      const el = Z.$(`[data-bind="${bind}"]`, ed.layer.el);
-      if (el) {
-        el.focus();
-        try {
-          el.setSelectionRange(pos, pos);
-        } catch (e) {}
-      }
-    }
-  }
   function goto(i) {
     ed.step = Z.clamp(i, 0, STEPS.length - 1);
     ed.visited.add(ed.step);
@@ -350,14 +335,9 @@
     const t = j.target;
     const leaf = (j.source.dataset || 'daten').split('/').pop().replace(/\s+/g, '-');
     const suggestions = [`/mnt/user/backup/zfs/${leaf}`, `/mnt/user/backup/${leaf}`, `/mnt/disk1/backup/${leaf}`];
-    const down = ed.check?.downstream?.[0] || null;
     const otherPools = (Z.state.pools || []).map((p) => p.name).filter((p) => p !== (j.source.dataset || '').split('/')[0]);
     return `<h2 class="ed-h">${icon('drive')}Wohin wird gesichert?</h2>
-      <p class="ed-lead">${
-        down
-          ? `Dieses Ziel sichert <b>${esc(down.tool)}</b> bereits außer Haus (Plan „${esc(down.name)}“). Ein <b>Spiegel</b> mit stabilem Pfad genügt, die Historie liegt in ${esc(down.tool)} und in den lokalen Snapshots.`
-          : 'Für das XFS-Array ist <b>rsync, versioniert</b> ideal. Für einen zweiten ZFS-Pool oder Server ist <b>zfs send</b> schneller und blockgenau.'
-      }</p>
+      <p class="ed-lead">Für das XFS-Array ist <b>rsync, versioniert</b> ideal. Für einen zweiten ZFS-Pool oder Server ist <b>zfs send</b> schneller und blockgenau.</p>
       <div class="ed-cards two">
         ${card({ act: 'edMethod', value: 'rsync', on: j.method === 'rsync', icon: 'folder', title: 'rsync', tag: 'Dateien', text: 'Kopiert aus dem Snapshot in einen Ordner. Funktioniert mit jedem Dateisystem, auch mit dem Array.' })}
         ${card({ act: 'edMethod', value: 'zfs', on: j.method === 'zfs', icon: 'layers', title: 'zfs send', tag: 'Blöcke', text: 'Inkrementelle Replikation auf einen ZFS-Pool, lokal oder per SSH. Fortsetzbar und mit erhaltenen Snapshots.' })}
@@ -366,13 +346,8 @@
         j.method === 'rsync'
           ? `<h4 class="ed-h4">Modus</h4>
         <div class="ed-cards two">
-          ${
-            down
-              ? card({ act: 'edMode', value: 'mirror', on: t.mode === 'mirror', icon: 'copy', title: 'Spiegel', tag: `empfohlen mit ${down.tool}`, tone: 'ok', text: `Stabiler Pfad mit dem aktuellen Stand. Die Versionierung übernimmt ${esc(down.tool)} („${esc(down.name)}“, ${esc(fmt.retention(down.retention))}). Ältere Stände gibt es zusätzlich als lokale ZFS-Snapshots.` }) +
-                card({ act: 'edMode', value: 'versioned', on: t.mode === 'versioned', icon: 'history', title: 'Versioniert', tag: 'zusätzlich lokal', text: `Versionen auch auf dem Array. Für den neuesten Stand kann ${esc(down.tool)} den Pfad <code>latest/</code> sichern; Include-Pfade und Symlink-Behandlung im nachgelagerten Backup selbst prüfen.` })
-              : card({ act: 'edMode', value: 'versioned', on: t.mode === 'versioned', icon: 'history', title: 'Versioniert', tag: 'empfohlen', tone: 'ok', text: 'Jeder Lauf wird ein eigener Ordner. Unveränderte Dateien sind Hardlinks und kosten kaum Platz. Gelöschte oder verschlüsselte Dateien bleiben in älteren Versionen erhalten.' }) +
-                card({ act: 'edMode', value: 'mirror', on: t.mode === 'mirror', icon: 'copy', title: 'Spiegel', tag: '--delete', tone: 'warn', text: 'Genau eine Kopie. Löschungen und Ransomware-Schäden landen beim nächsten Lauf auch im Backup, sofern kein nachgelagertes Backup wie Zerobyte die Versionen hält.' })
-          }
+          ${card({ act: 'edMode', value: 'versioned', on: t.mode === 'versioned', icon: 'history', title: 'Versioniert', tag: 'empfohlen', tone: 'ok', text: 'Jeder Lauf wird ein eigener Ordner. Unveränderte Dateien sind Hardlinks und kosten kaum Platz. Gelöschte oder verschlüsselte Dateien bleiben in älteren Versionen erhalten.' })}
+          ${card({ act: 'edMode', value: 'mirror', on: t.mode === 'mirror', icon: 'copy', title: 'Spiegel', tag: '--delete', tone: 'warn', text: 'Genau eine Kopie. Löschungen und Ransomware-Schäden landen beim nächsten Lauf auch im Backup.' })}
         </div>
         <label class="zbg-field"><span>Zielordner</span><input class="zbg-input mono big" data-bind="target.path" value="${esc(t.path)}" placeholder="/mnt/user/backup/zfs/${esc(leaf)}" spellcheck="false"></label>
         <div class="chips">${suggestions.map((s) => `<button type="button" class="chip" data-act="edSuggest" data-value="${esc(s)}">${esc(s)}</button>`).join('')}</div>
@@ -442,10 +417,7 @@
       ed.check = { error: e.message };
     }
     if (ed && ed.job.target.path === path) {
-      const hadDown = Z.$('.ed-card em', ed.layer.el)?.textContent.includes('mit ');
-      const hasDown = !!ed.check?.downstream?.length;
-      if (STEPS[ed.step].key === 'target' && hadDown !== hasDown) renderStepKeepFocus();
-      else Z.refresh('edCheck');
+      Z.refresh('edCheck');
     }
   }
   const debCheck = Z.debounce(checkTarget, 450);
@@ -456,7 +428,7 @@
     if (c.loading) return `<div class="chk muted">${icon('refresh', 'spin')}Prüfe Ziel …</div>`;
     if (c.error) return `<div class="chk bad">${icon('x')}${esc(c.error)}</div>`;
     return (
-      c.checks.map((k) => `<div class="chk ${k.info ? 'info' : k.ok ? 'good' : k.warn ? 'warn' : 'bad'}">${icon(k.info ? 'cloud' : k.ok ? 'check' : k.warn ? 'alert' : 'x')}${esc(k.label)}</div>`).join('') +
+      c.checks.map((k) => `<div class="chk ${k.ok ? 'good' : k.warn ? 'warn' : 'bad'}">${icon(k.ok ? 'check' : k.warn ? 'alert' : 'x')}${esc(k.label)}</div>`).join('') +
       (c.exists ? '' : `<div class="chk muted">${icon('info')}Ordner existiert noch nicht und wird beim ersten Lauf angelegt</div>`)
     );
   }
@@ -701,16 +673,11 @@
     const j = ed.job;
     const warns = [];
     const errs = STEPS.map((_, i) => stepError(i)).filter(Boolean);
-    if (j.method === 'rsync' && j.target.mode === 'mirror' && !ed.check?.downstream?.length) warns.push('Spiegel-Modus ohne nachgelagertes Backup: Gelöschte Dateien verschwinden auch aus dem Backup.');
+    if (j.method === 'rsync' && j.target.mode === 'mirror') warns.push('Spiegel-Modus: Gelöschte Dateien verschwinden auch aus dem Backup.');
     if (ed.check && ed.check.checks) ed.check.checks.filter((c) => !c.ok).forEach((c) => warns.push(c.label));
     if (!Object.values(j.snapshots.keep).some((v) => v > 0)) warns.push('Keine Snapshot-Aufbewahrung: Es bleibt nur der jeweils neueste Snapshot.');
     if (j.notify === 'none' && !j.healthcheckUrl) warns.push('Keine Benachrichtigung: Fehler fallen nur im Verlauf auf.');
     const sim = Z.cron.valid(j.schedule) ? Z.retention.simulate(j.schedule, j.snapshots.keep) : null;
-    const down = j.method === 'rsync' && !j.target.ssh ? ed.check?.downstream?.[0] : null;
-    const ej = ed.originalId && Z.state.overview ? Z.findJob(ed.originalId) : null;
-    const avgDur = ej && ej.runs.length ? ej.runs.reduce((x, r) => x + (r.duration || 0), 0) / ej.runs.length : null;
-    const chain = down ? Z.chainCheck(j, down, avgDur) : null;
-    if (chain && chain.tone !== 'ok') warns.push(chain.text);
     const row = (ic, title, value, step) => `<div class="sum-row" data-act="edGo" data-i="${step}">${icon(ic)}<div><small>${title}</small><b>${value}</b></div>${icon('edit', 'sum-edit')}</div>`;
     return `<h2 class="ed-h">${icon('check')}Alles bereit?</h2>
       <div class="sum-hero">
@@ -728,7 +695,6 @@
         ${row('camera', 'Snapshots', `${esc(Z.keepSummary(j))}${sim ? ` <span class="muted">≈ ${sim.kept.length} Stück</span>` : ''}`, 3)}
         ${j.method === 'rsync' && j.target.mode === 'versioned' ? row('history', 'Versionen', `${j.versions.keep.daily} T · ${j.versions.keep.weekly} W · ${j.versions.keep.monthly} M`, 3) : ''}
         ${row('box', 'Konsistenz', j.consistency.mode === 'crash' ? 'Crash-konsistent' : `${j.consistency.mode === 'pause' ? 'Pausieren' : 'Stoppen'}: ${esc(j.consistency.containers.join(', ') || 'keine Container gewählt')}`, 4)}
-        ${down ? row('cloud', 'Weitersicherung (3-2-1)', `${esc(down.tool)} „${esc(down.name)}“ · ${esc(Z.cron.describe(down.cron))} <span class="${chain.tone === 'ok' ? 'muted' : 'err'}">${chain.tone === 'ok' ? '✓ Zeitfenster passt' : '⚠ Zeitfenster knapp'}</span>`, 1) : ''}
         ${row('bell', 'Überwachung', `${{ all: 'Jeder Lauf', errors: 'Nur Fehler', none: 'Keine' }[j.notify]} · Warnung nach ${j.maxAgeHours} h${j.healthcheckUrl ? ' · Healthchecks' : ''}`, 5)}
         ${j.method === 'rsync' && j.system ? row('server', 'Systemdisk', 'Partitionen, EFI, LUKS-Header → <span class="mono">.zbg-system/</span>', 1) : ''}
         ${j.method === 'rsync' ? row('shieldCheck', 'Prüfsummen', j.verify ? 'Nach jedem Backup prüfen' : 'Nur bei manuell gestarteter Prüfung', 5) : ''}

@@ -17,7 +17,6 @@ final class Api
             'target.check' => Paths::checkTarget(self::str($p, 'path'), self::optStr($p, 'source')),
             'containers' => Docker::containers(),
             'source.plan' => Zfs::plan(self::str($p, 'dataset'), (bool)($p['recursive'] ?? true), array_map('strval', (array)($p['exclude'] ?? []))),
-            'downstream' => Downstream::plans(),
             'browse' => Browse::list(self::str($p, 'dataset'), self::str($p, 'snapshot'), (string)($p['path'] ?? '')),
             'browse.clone' => Browse::clone(self::str($p, 'dataset'), (string)($p['path'] ?? '')),
             'history' => ($id = self::optStr($p, 'job')) ? History::forJob($id, 500) : History::all(500),
@@ -60,7 +59,6 @@ final class Api
                 'sourceBytes' => $used[$job['source']['dataset']] ?? 0,
                 'status' => History::status($job, $runs),
                 'nextRun' => $job['enabled'] ? Cron::next($job['schedule']) : null,
-                'downstream' => $job['method'] === 'rsync' && !$job['target']['ssh'] ? Downstream::forTarget($job['target']['path']) : [],
                 'runs' => array_map(static fn($r) => [
                     'start' => $r['start'] ?? 0,
                     'duration' => $r['duration'] ?? 0,
@@ -96,9 +94,6 @@ final class Api
             foreach ($script['proposals'] as $proposal) {
                 // Existing User Scripts remain active until the user explicitly cuts over.
                 $proposal['enabled'] = false;
-                $proposal['target']['adoptExisting'] = $proposal['target']['mode'] === 'mirror'
-                    && !empty($proposal['migration']['keepPath'])
-                    && ($proposal['migration']['oldTarget'] ?? null) === $proposal['target']['path'];
                 $inputs[] = $proposal;
             }
             return JobStore::saveBatch($inputs);

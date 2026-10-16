@@ -86,21 +86,6 @@ final class UserScripts
 
     private static function proposal(string $kind, string $ds, string $leaf, string $oldBase, string $cron, array $extra): array
     {
-        // Wird das alte Ziel bereits weitergesichert (z. B. Zerobyte), bleibt der Pfad gleich und wird ein Spiegel:
-        // Der nachgelagerte Plan muss nicht angepasst werden und liefert selbst die Versionierung.
-        $old = $extra['oldTarget'] ?? null;
-        $down = $old ? Downstream::forTarget($old) : [];
-        if ($down) {
-            return array_replace_recursive(Job::defaults(), [
-                '_kind' => $kind,
-                'id' => Job::slug($leaf),
-                'name' => ucfirst($leaf) . ' → Array',
-                'source' => ['dataset' => $ds, 'recursive' => true, 'exclude' => []],
-                'target' => ['path' => $old, 'mode' => 'mirror'],
-                'schedule' => $cron,
-                'migration' => $extra + ['keepPath' => true, 'downstream' => $down[0]['tool'] . ' „' . $down[0]['name'] . '“ (' . $down[0]['cron'] . ')'],
-            ]);
-        }
         // Neuer Unterordner neben dem alten Spiegel, der alte bleibt bis zur manuellen Löschung liegen.
         $base = preg_replace('~/zfs-test$~', '/zfs', rtrim($oldBase, '/'));
         if ($base === rtrim($oldBase, '/')) {

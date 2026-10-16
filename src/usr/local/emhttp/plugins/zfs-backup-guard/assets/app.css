@@ -3375,7 +3375,7 @@ body.zbg-noscroll .zbg .zbg-toasts {
   }
 }
 
-/* ---------- Dataset-Sonderfälle, Plan, Weitersicherung ---------- */
+/* ---------- Dataset-Sonderfälle, Plan ---------- */
 .zbg .ds-flag {
   display: inline-flex;
   align-items: center;
@@ -3451,20 +3451,6 @@ body.zbg-noscroll .zbg .zbg-toasts {
   gap: 4px;
   justify-content: flex-end;
   flex-wrap: wrap;
-}
-.zbg .chk.info {
-  color: var(--accent);
-  background: var(--accent-soft);
-}
-.zbg .job-route .ds-down .zi {
-  color: var(--tone);
-}
-.zbg .job-route .ds-down > span {
-  color: var(--text-2);
-  font-family: var(--font);
-}
-.zbg .job-route .ds-down.tone-warn > span {
-  color: var(--warn);
 }
 @media (max-width: 860px) {
   .zbg .plan-row {

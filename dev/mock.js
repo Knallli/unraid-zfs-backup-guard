@@ -45,18 +45,7 @@
     { name: 'flash', size: 15 * GB, alloc: 2.6 * GB, free: 12.4 * GB, health: 'ONLINE', capacity: 17, fragmentation: 3, boot: true },
   ];
 
-  // Zerobyte-Pläne wie auf dem echten System
-  const downstream = [
-    { tool: 'Zerobyte', name: 'AppData Daily', enabled: true, cron: '00 05 * * *', paths: ['/mnt/user/backup/zfs-test/appdata', '/mnt/user/backup/zfs-test/domains', '/mnt/user/backup/zfs-test/lxc'], retention: { keepDaily: 7, keepWeekly: 5, keepMonthly: 3 }, lastStatus: 'success' },
-    { tool: 'Zerobyte', name: 'Cloud-Data', enabled: true, cron: '00 04 * * *', paths: ['/mnt/user/main/seafile-data', '/mnt/user/main/nextcloud'], retention: { keepDaily: 5, keepMonthly: 2 }, lastStatus: 'success' },
-    { tool: 'Zerobyte', name: 'Immich', enabled: true, cron: '30 04 * * 1', paths: ['/mnt/user/main/immich'], retention: { keepDaily: 5, keepMonthly: 3 }, lastStatus: 'success' },
-  ];
   const within = (root, p) => (p + '/').startsWith(root.replace(/\/$/, '') + '/');
-  const downFor = (path) =>
-    downstream.flatMap((d) => {
-      const pp = d.paths.find((x) => within(x, path) || within(path, x));
-      return pp ? [{ ...d, coverage: within(pp, path) ? 'full' : 'partial', matchedPath: pp }] : [];
-    });
 
   function plan(source, recursive, exclude) {
     const root = datasets.find((d) => d.name === source);
@@ -247,7 +236,7 @@
           now: now(),
           pools,
           migration: [{ script: 'zfs snapshot new2093513041', jobs: 4 }],
-          jobs: jobs.map((j) => ({ job: j, status: status(j), downstream: j.method === 'rsync' && !j.target.ssh ? downFor(j.target.path) : [], nextRun: j.enabled ? window.ZBG.cron.next(j.schedule) : null, snapshotCount: snapsFor(j.source.dataset).filter((s) => s.own).length, sourceBytes: (datasets.find((d) => d.name === j.source.dataset) || {}).used || 0, runs: (history[j.id] || []).slice(0, 30).reverse().map((r) => ({ start: r.start, duration: r.duration, bytes: r.bytes, result: r.result })) })),
+          jobs: jobs.map((j) => ({ job: j, status: status(j), nextRun: j.enabled ? window.ZBG.cron.next(j.schedule) : null, snapshotCount: snapsFor(j.source.dataset).filter((s) => s.own).length, sourceBytes: (datasets.find((d) => d.name === j.source.dataset) || {}).used || 0, runs: (history[j.id] || []).slice(0, 30).reverse().map((r) => ({ start: r.start, duration: r.duration, bytes: r.bytes, result: r.result })) })),
         };
       case 'datasets':
         return { pools, datasets };
@@ -284,8 +273,6 @@
         return { command: `zfs rollback '${String(p.dataset + '@' + p.snapshot).replace(/'/g, "'\\''")}'`, warning: 'Alle Änderungen nach dem Snapshot gehen verloren. Neuere Snapshots müssen separat beurteilt werden. Kein automatischer Rollback.' };
       case 'source.plan':
         return plan(p.dataset, p.recursive !== false, p.exclude || []);
-      case 'downstream':
-        return downstream;
       case 'containers':
         return containers;
       case 'history':
@@ -302,8 +289,7 @@
         const mounted = p.path.startsWith('/mnt/user/') || p.path.startsWith('/mnt/disk');
         const inside = p.source && p.path.startsWith('/mnt/' + p.source);
         const same = p.path.startsWith('/mnt/cache');
-        const down = downFor(p.path);
-        return { downstream: down, path: p.path, exists: /zfs(-test)?\/(appdata|main|domains|lxc)$/.test(p.path), mounted, writable: mounted, free: 2.1 * 1024 * GB, fs: 'xfs', checks: [{ ok: mounted, label: mounted ? 'Gemountet (fuse.shfs auf /mnt/user)' : 'Ziel ist nicht gemountet' }, { ok: true, label: 'Share ' + p.path.split('/').slice(0, 4).join('/') + ' vorhanden' }, { ok: mounted, label: mounted ? 'Beschreibbar' : 'Nicht beschreibbar' }, { ok: !inside, label: inside ? 'Ziel liegt in der Quelle!' : 'Ziel liegt außerhalb der Quelle' }, { ok: !same, warn: same, label: same ? 'Gleicher Pool wie die Quelle – schützt nicht vor Pool-Ausfall' : 'Anderes Gerät als die Quelle (Array, XFS)' }, { ok: true, label: 'Freier Platz 2,1 TB (Quelle 182 GB)' }, ...down.map((d) => ({ ok: true, info: true, label: `Wird von ${d.tool}-Plan „${d.name}“ weitergesichert (${d.cron}${d.coverage === 'partial' ? ', nur teilweise' : ''})` }))] };
+        return { path: p.path, exists: /zfs(-test)?\/(appdata|main|domains|lxc)$/.test(p.path), mounted, writable: mounted, free: 2.1 * 1024 * GB, fs: 'xfs', checks: [{ ok: mounted, label: mounted ? 'Gemountet (fuse.shfs auf /mnt/user)' : 'Ziel ist nicht gemountet' }, { ok: true, label: 'Share ' + p.path.split('/').slice(0, 4).join('/') + ' vorhanden' }, { ok: mounted, label: mounted ? 'Beschreibbar' : 'Nicht beschreibbar' }, { ok: !inside, label: inside ? 'Ziel liegt in der Quelle!' : 'Ziel liegt außerhalb der Quelle' }, { ok: !same, warn: same, label: same ? 'Gleicher Pool wie die Quelle – schützt nicht vor Pool-Ausfall' : 'Anderes Gerät als die Quelle (Array, XFS)' }, { ok: true, label: 'Freier Platz 2,1 TB (Quelle 182 GB)' }] };
       }
       case 'jobs.save': {
         const j = p.job;
@@ -336,8 +322,7 @@
             kind: 'rsync-mirror',
             proposals: ['main', 'appdata', 'domains', 'lxc'].map((n) => {
               const old = '/mnt/user/backup/zfs-test/' + n;
-              const d = downFor(old)[0];
-              return { ...clone(base), id: n + '-import', name: n[0].toUpperCase() + n.slice(1) + ' → Array', source: { dataset: 'cache/' + n, recursive: true, exclude: [] }, target: d ? { path: old, mode: 'mirror', dataset: '', ssh: null } : { path: '/mnt/user/backup/zfs/' + n, mode: 'versioned', dataset: '', ssh: null }, migration: d ? { oldTarget: old, keepPath: true, downstream: `${d.tool} „${d.name}“ (${d.cron})` } : { oldTarget: old } };
+              return { ...clone(base), id: n + '-import', name: n[0].toUpperCase() + n.slice(1) + ' → Array', source: { dataset: 'cache/' + n, recursive: true, exclude: [] }, target: { path: '/mnt/user/backup/zfs/' + n, mode: 'versioned', dataset: '', ssh: null }, migration: { oldTarget: old } };
             }),
           },
           { script: 'Autosnapshot', active: false, schedule: null, kind: 'spaceinvader', proposals: [{ ...clone(base), id: 'appdata-2', name: 'Appdata → Array', source: { dataset: 'cache/appdata', recursive: true, exclude: [] }, target: { path: '/mnt/user/backup/zbg/appdata', mode: 'versioned', dataset: '', ssh: null }, migration: { oldReplication: 'rsync' } }] },
@@ -347,7 +332,7 @@
         const script = scan.find((s) => s.script === p.script);
         if (!script) err('Skript nicht gefunden');
         if (script.proposals.some((j) => jobs.some((existing) => existing.id === j.id))) err('Job-ID bereits vorhanden');
-        const imported = script.proposals.map((j) => { const saved = clone(j); saved.target.adoptExisting = saved.target.mode === 'mirror' && !!saved.migration?.keepPath; delete saved.migration; saved.enabled = false; return saved; });
+        const imported = script.proposals.map((j) => { const saved = clone(j); delete saved.migration; saved.enabled = false; return saved; });
         jobs.push(...imported);
         imported.forEach((j) => { history[j.id] = []; });
         return clone(imported);

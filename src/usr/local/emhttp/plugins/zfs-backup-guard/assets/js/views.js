@@ -29,20 +29,6 @@
     return parts.join(' · ') || 'nur neuester';
   }
   Z.methodLabel = methodLabel;
-  /** Passt das Zeitfenster zwischen diesem Job und dem nachgelagerten Backup (z. B. Zerobyte)? */
-  Z.chainCheck = function (job, d, avg) {
-    if (!d.enabled) return { tone: 'warn', text: `${d.tool}-Plan „${d.name}“ ist deaktiviert` };
-    if (d.coverage === 'partial') return { tone: 'warn', text: `${d.tool}-Plan „${d.name}“ sichert nur einen Teil des Ziels (${d.matchedPath})` };
-    const t1 = Z.cron.next(job.schedule);
-    const t2 = t1 && Z.cron.next(d.cron, t1 - 1);
-    if (!t1 || !t2) return { tone: 'warn', text: 'Zeitplan nicht auswertbar' };
-    const gap = t2 - t1;
-    const dur = avg || 1800;
-    const need = dur * 1.5 + 600;
-    if (gap < need)
-      return { tone: 'warn', text: `${d.tool} startet ${fmt.duration(gap)} nach dem Backup, ein Lauf dauert aber Ø ${fmt.duration(dur)}. Das Zeitfenster ist zu knapp, ${d.tool} könnte einen halbfertigen Stand sichern.` };
-    return { tone: 'ok', text: `${d.tool}-Plan „${d.name}“ (${Z.cron.describe(d.cron)}) startet ${fmt.duration(gap)} nach dem Backup. Das Zeitfenster passt (Ø Laufzeit ${fmt.duration(dur)}).` };
-  };
   Z.targetLabel = targetLabel;
   Z.keepSummary = keepSummary;
 
@@ -155,18 +141,6 @@
         <span class="node">${icon('database')}<span>${esc(job.source.dataset)}</span>${job.source.recursive ? '<em>+ Kinder</em>' : ''}</span>
         <span class="flow"><i></i>${icon('arrow')}</span>
         <span class="node">${icon(job.target.ssh ? 'cloud' : job.method === 'zfs' ? 'layers' : 'drive')}<span>${esc(targetLabel(job))}</span></span>
-        ${
-          j.downstream && !j.downstream.length && job.method === 'rsync' && !job.target.ssh
-            ? `<span class="flow"></span><span class="node ds-down tone-idle" title="Kein Zerobyte-Plan erfasst dieses Ziel – keine Kopie außer Haus (3-2-1)">${icon('cloud')}<span>keine Weitersicherung erkannt</span></span>`
-            : ''
-        }
-        ${(j.downstream || [])
-          .slice(0, 1)
-          .map((d) => {
-            const chk = Z.chainCheck(job, d, avg);
-            return `<span class="flow"></span><span class="node ds-down tone-${chk.tone}" title="${esc(chk.text)}">${icon('cloud')}<span>${esc(d.tool)} „${esc(d.name)}“ · ${esc(Z.cron.describe(d.cron).replace(/^Täglich um /, 'tägl. '))}${chk.tone === 'ok' ? '' : ' ⚠'}</span></span>`;
-          })
-          .join('')}
       </div>
       <div class="job-stats">
         <div><span>Letztes Backup</span><b title="${esc(fmt.dateFull(last?.end))}">${last ? esc(fmt.rel(last.end)) : '—'}</b></div>
@@ -994,7 +968,7 @@
             const collision = s.proposals.some((p) => existing.has(p.id));
             return `<section class="mig-script">
               <header><b>${esc(s.script)}</b>${s.active ? ui.badge(s.schedule ? Z.cron.describe(s.schedule) : 'aktiv', 'warn', 'clock') : ui.badge('deaktiviert', 'idle')}</header>
-              <div class="mig-jobs">${s.proposals.map((p) => `<div class="mig-job"><div><b>${esc(p.source.dataset)}</b><span class="mono">${esc(p.target.path || p.target.dataset)}</span><small>${esc(p.target.mode === 'mirror' ? 'Spiegel' : 'versioniert')} · ${esc(Z.cron.describe(p.schedule))} · Snapshots ${esc(keepSummary(p))}</small>${p.migration?.oldTarget ? `<small>Altes Ziel: <span class="mono">${esc(p.migration.oldTarget)}</span></small>` : ''}${p.migration?.keepPath ? `<small>Der bisherige Spiegelpfad wird weiterverwendet. Bestehende Daten vor dem ersten Lauf prüfen.</small>` : '<small>Neuer Versionsordner; der alte Spiegel bleibt unangetastet.</small>'}${existing.has(p.id) ? '<small class="err">Job-ID bereits vorhanden – keine bestehenden Jobs überschreiben.</small>' : ''}</div></div>`).join('')}</div>
+              <div class="mig-jobs">${s.proposals.map((p) => `<div class="mig-job"><div><b>${esc(p.source.dataset)}</b><span class="mono">${esc(p.target.path || p.target.dataset)}</span><small>${esc(p.target.mode === 'mirror' ? 'Spiegel' : 'versioniert')} · ${esc(Z.cron.describe(p.schedule))} · Snapshots ${esc(keepSummary(p))}</small>${p.migration?.oldTarget ? `<small>Altes Ziel: <span class="mono">${esc(p.migration.oldTarget)}</span></small>` : ''}<small>Neuer Versionsordner; der alte Spiegel bleibt unangetastet.</small>${existing.has(p.id) ? '<small class="err">Job-ID bereits vorhanden – keine bestehenden Jobs überschreiben.</small>' : ''}</div></div>`).join('')}</div>
               ${collision ? '<p class="err">Vor dem Import die kollidierende Job-ID im Editor umbenennen oder einen nicht mehr benötigten Job entfernen.</p>' : `<label class="zbg-check"><input type="checkbox" data-input="migReview"><span>Ich habe alle vorgeschlagenen Quellen, Ziele und Zeitpläne geprüft.</span></label>${ui.btn('Dieses Skript geprüft importieren', { act: 'migImport', kind: 'primary', icon: 'download', data: { script: s.script }, disabled: true })}`}
               <p role="status" data-mig-result></p>
             </section>`;
