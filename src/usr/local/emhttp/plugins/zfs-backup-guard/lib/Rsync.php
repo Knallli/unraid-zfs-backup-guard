@@ -72,6 +72,8 @@ df -B1 --output=avail -- "$probe"
         if ($ssh === null && $job['target']['mode'] === 'versioned') {
             Versions::assertLatest($job);
         }
+        // Delta laut ZFS statt rsync --dry-run: kein zusätzlicher Lauf über den kompletten Dateibaum
+        // ponytail: Versionsmodus kopiert geänderte Dateien ganz, written@ unterschätzt dort große, wenig geänderte Dateien
         $estimated = 0;
         $datasets = [];
         foreach ($plan['items'] as $item) {
@@ -81,32 +83,14 @@ df -B1 --output=avail -- "$probe"
             if ($item['action'] !== 'copy') {
                 continue;
             }
-            $destination = $job['target']['mode'] === 'mirror' ? self::join($base, $item['targetRel']) : ($previous === null ? null : self::join($previous, $item['targetRel']));
-            if ($destination === null || !self::exists($job, $destination)) {
-                $destination = $existing . '/.zbg-estimate-' . bin2hex(random_bytes(8));
-            }
-            $cmd = self::command($job, $plan, $item, rtrim($item['path'], '/') . '/', $destination, null, true, false);
-            $result = Exec::stream($cmd, static function (string $line): void {}, $cancel, 300);
-            if ($result['code'] !== 0) {
-                throw new \RuntimeException('Rsync-Vorprüfung fehlgeschlagen: ' . ($result['err'] ?: $result['out']));
-            }
-            $stats = self::stats($result['out']);
-            $estimated += $stats['bytes'];
-            $datasets[] = ['dataset' => $item['name'], 'estimatedBytes' => $stats['bytes']];
+            $bytes = Zfs::changedSince($item['name'], $job['id']);
+            $estimated += $bytes;
+            $datasets[] = ['dataset' => $item['name'], 'estimatedBytes' => $bytes];
         }
         if ($free < $estimated) {
             throw new UserError('Zu wenig Zielplatz: benötigt ' . Paths::human($estimated) . ', frei ' . Paths::human($free));
         }
         return ['estimatedBytes' => $estimated, 'free' => $free, 'mountpoint' => $mount, 'previous' => $previous, 'datasets' => $datasets];
-    }
-
-    private static function exists(array $job, string $path): bool
-    {
-        $r = Exec::run(Remote::command($job['target']['ssh'] ?? null, ['test', '-d', $path]));
-        if (!in_array($r['code'], [0, 1], true)) {
-            throw new \RuntimeException('Zielabfrage fehlgeschlagen: ' . $r['err']);
-        }
-        return $r['code'] === 0;
     }
 
     private static function join(string $root, ?string $relative): string
@@ -117,6 +101,10 @@ df -B1 --output=avail -- "$probe"
     private static function command(array $job, array $plan, array $item, string $source, string $target, ?string $previous, bool $dryRun, bool $checksum): array
     {
         $cmd = ['rsync', '-aHAX', '--numeric-ids', '--delete', '--delete-excluded', '-x', '--stats', '--protect-args'];
+        if (($job['target']['mode'] ?? '') === 'mirror' && !$dryRun) {
+            // wie das alte User-Script: geänderte Dateien direkt überschreiben statt komplett neu schreiben (nie bei Hardlink-Versionen)
+            $cmd[] = '--inplace';
+        }
         if ($dryRun) {
             $cmd[] = '--dry-run';
         } else {

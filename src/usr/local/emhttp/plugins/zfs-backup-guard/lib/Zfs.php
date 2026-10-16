@@ -475,6 +475,14 @@ final class Zfs
         }
     }
 
+    /** Bytes seit dem letzten eigenen Snapshot des Jobs (ZFS "written@"), ohne Snapshot das referenzierte Volumen. */
+    public static function changedSince(string $dataset, string $job): int
+    {
+        $own = array_values(array_filter(self::snapshots($dataset), static fn($s) => $s['own'] && $s['job'] === $job));
+        $prop = $own === [] ? 'referenced' : 'written@' . end($own)['snapshot'];
+        return (int)trim(Exec::ok(['zfs', 'get', '-Hp', '-o', 'value', $prop, $dataset]));
+    }
+
     public static function prune(array $job, array $plan, array $protected, callable $log, ?callable $cancel = null): void
     {
         foreach ($plan['items'] as $item) {

@@ -367,6 +367,10 @@ $rsyncCmd = (new ReflectionMethod(ZBG\Rsync::class, 'command'))->invoke(null, ['
     ['items' => [['name' => 'p/data', 'rel' => '', 'targetRel' => ''], ['name' => 'p/data/vm', 'rel' => 'vm', 'targetRel' => null]]],
     ['name' => 'p/data', 'rel' => '', 'targetRel' => '', 'protect' => []], '/src/', '/dst', null, false, false);
 check('Rsync: gesperrtes Kind auch unter .datasets geschützt', in_array('--filter=P /.datasets/vm/***', $rsyncCmd, true) && in_array('--filter=P /vm/***', $rsyncCmd, true));
+$cmdFor = static fn(string $mode, bool $dry) => (new ReflectionMethod(ZBG\Rsync::class, 'command'))->invoke(null, ['target' => ['mode' => $mode]],
+    ['items' => []], ['name' => 'p/data', 'rel' => '', 'targetRel' => '', 'protect' => []], '/src/', '/dst', null, $dry, false);
+check('Rsync: Spiegel schreibt geänderte Dateien in place', in_array('--inplace', $cmdFor('mirror', false), true));
+check('Rsync: Versionen und Prüfläufe nie in place', !in_array('--inplace', $cmdFor('versioned', false), true) && !in_array('--inplace', $cmdFor('mirror', true), true));
 check('Rsync: .zbg-system reserviert', in_array('--filter=P /.zbg-system', $rsyncCmd, true));
 RunState::write('fixture-b', ['state' => 'success', 'pid' => 0]);
 
