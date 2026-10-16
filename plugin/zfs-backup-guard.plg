@@ -2,8 +2,8 @@
 <!DOCTYPE PLUGIN [
 <!ENTITY name "zfs-backup-guard">
 <!ENTITY author "Knallli">
-<!ENTITY version "2026.10.16a">
-<!ENTITY md5 "6857d2e7534a6ced66ce93b8ff57271a">
+<!ENTITY version "2026.10.16b">
+<!ENTITY md5 "7195807d44ab379985ca8e9963f62c7c">
 <!ENTITY launch "Settings/ZFSBackupGuard">
 <!ENTITY gitURL "https://github.com/Knallli/unraid-zfs-backup-guard">
 <!ENTITY pluginURL "https://raw.githubusercontent.com/Knallli/unraid-zfs-backup-guard/main/plugin/&name;.plg">
@@ -15,6 +15,9 @@
 <PLUGIN name="&name;" author="&author;" version="&version;" launch="&launch;" pluginURL="&pluginURL;" support="&gitURL;/issues" icon="shield" min="6.12.0">
 
 <CHANGES>
+###2026.10.16b
+- Systemdisk-Backup für /boot: Partitionstabellen, EFI-/BIOS-Bootdateien, Pool-Layout, LUKS-Header und Wiederherstellungsanleitung, nur Änderungen werden übertragen
+
 ###2026.10.16a
 - Eigene Snapshots lassen sich in der Snapshot-Ansicht löschen (nicht während der Job läuft, nie die Replikationsbasis)
 
