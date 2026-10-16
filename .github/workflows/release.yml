@@ -1,0 +1,78 @@
+# Jeder Push auf main, der das Plugin ändert: testen, Version (Datum + Suffix) setzen, Paket bauen, Release anlegen.
+name: release
+
+on:
+  push:
+    branches: [main]
+    paths: ['src/**', 'build.sh', 'tests/**']
+  workflow_dispatch:
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.3'
+          extensions: pcntl, sqlite3
+
+      - name: Tests
+        run: php tests/run.php
+
+      - name: Version bestimmen
+        id: v
+        run: |
+          d=$(TZ=Europe/Berlin date +%Y.%m.%d)
+          v=$d
+          for s in '' a b c d e f g h i j k l m n o p q r s t u v w x y z; do
+            v=$d$s
+            git rev-parse -q --verify "refs/tags/$v" >/dev/null || break
+          done
+          git rev-parse -q --verify "refs/tags/$v" >/dev/null && { echo "keine freie Version für $d" >&2; exit 1; }
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+          echo "prev=$(git describe --tags --abbrev=0 2>/dev/null || true)" >> "$GITHUB_OUTPUT"
+
+      - name: Version, Changelog, Paket
+        env:
+          VERSION: ${{ steps.v.outputs.version }}
+          PREV: ${{ steps.v.outputs.prev }}
+        run: |
+          sed -i "s/^const VERSION = '.*';/const VERSION = '$VERSION';/" src/usr/local/emhttp/plugins/zfs-backup-guard/include/bootstrap.php
+          git log --no-merges --format='%s' ${PREV:+$PREV..}HEAD | grep -v '^Release ' > "$RUNNER_TEMP/changes.txt" || true
+          python3 - <<'EOF'
+          import os, html
+          v = os.environ['VERSION']
+          lines = [l.strip() for l in open(os.environ['RUNNER_TEMP'] + '/changes.txt') if l.strip()] or ['Wartung']
+          block = '###' + v + '\n' + ''.join('- ' + html.escape(l, quote=False) + '\n' for l in lines) + '\n'
+          p = 'plugin/zfs-backup-guard.plg'
+          s = open(p).read()
+          assert s.count('<CHANGES>\n') == 1
+          open(p, 'w').write(s.replace('<CHANGES>\n', '<CHANGES>\n' + block, 1))
+          EOF
+          ./build.sh
+
+      - name: Commit, Tag, Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.v.outputs.version }}
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -am "Release $VERSION [skip ci]"
+          git tag "$VERSION"
+          git push origin "refs/tags/$VERSION"
+          # Release (mit Paket) zuerst, dann main: die .plg auf main zeigt nie auf ein fehlendes Paket
+          sed -n "/^###$VERSION\$/,/^###/p" plugin/zfs-backup-guard.plg | sed '1d;/^###/d' > "$RUNNER_TEMP/notes.md"
+          gh release create "$VERSION" "dist/zfs-backup-guard-$VERSION-noarch-1.txz" --title "$VERSION" --notes-file "$RUNNER_TEMP/notes.md"
+          git push origin HEAD:main
