@@ -153,23 +153,69 @@ df -B1 --output=avail -- "$probe"
             $pattern = strtr(rtrim($path, '/'), ['\\' => '\\\\', '[' => '\\[', ']' => '\\]', '*' => '\\*', '?' => '\\?']) . '/***';
             array_push($cmd, '--filter=P ' . $pattern, '--filter=- ' . $pattern);
         }
-        foreach (['.zfs', '.zbg-target.json', '.zbg-version.json', '.zbg-owner-*', '.zbg-latest-*'] as $reserved) {
+        foreach (['.zfs', '.zbg-target.json', '.zbg-version.json', '.zbg-system', '.zbg-owner-*', '.zbg-latest-*'] as $reserved) {
             array_push($cmd, '--filter=P /' . $reserved, '--filter=- /' . $reserved);
         }
         if ($previous !== null && !$checksum) {
             $cmd[] = '--link-dest=' . $previous;
         }
-        $ssh = $job['target']['ssh'] ?? null;
-        if ($ssh !== null) {
-            array_push($cmd, '-e', Remote::quote(Remote::ssh($ssh)));
-            $host = $ssh['host'];
-            if (str_contains($host, ':') && $host[0] !== '[') {
-                $host = '[' . $host . ']';
-            }
-            $target = ($ssh['user'] ?? 'root') . '@' . $host . ':' . $target;
-        }
+        $target = self::sshTarget($job, $cmd, $target);
         array_push($cmd, '--', $source, rtrim($target, '/') . '/');
         return $cmd;
+    }
+
+    /** Hängt bei SSH-Zielen `-e` an $cmd und liefert das Ziel als user@host:pfad. */
+    private static function sshTarget(array $job, array &$cmd, string $target): string
+    {
+        $ssh = $job['target']['ssh'] ?? null;
+        if ($ssh === null) {
+            return $target;
+        }
+        array_push($cmd, '-e', Remote::quote(Remote::ssh($ssh)));
+        $host = $ssh['host'];
+        if (str_contains($host, ':') && $host[0] !== '[') {
+            $host = '[' . $host . ']';
+        }
+        return ($ssh['user'] ?? 'root') . '@' . $host . ':' . $target;
+    }
+
+    /** Systemdisk-Metadaten lokal erfassen und nach <Ziel>/.zbg-system/ übertragen. */
+    private static function system(array $job, string $destination, ?string $previous, callable $log, ?callable $cancel): array
+    {
+        $stage = sys_get_temp_dir() . '/zbg-system-' . bin2hex(random_bytes(6));
+        if (!mkdir($stage, 0700)) {
+            throw new \RuntimeException('Staging-Ordner nicht erstellbar');
+        }
+        try {
+            $log('Systemdisk: Partitionen, EFI, LUKS-Header');
+            $summary = System::capture($stage, $log);
+            $target = self::join($destination, '.zbg-system');
+            self::remote($job, 'root=$1; t=$2; [ "$(realpath -m -- "$t")" = "$t" ] || { echo "Ziel-Symlink verweigert" >&2; exit 1; }; mkdir -p -- "$t"', [$destination, $target]);
+            // frisch erzeugte Dateien haben neue mtimes: per Prüfsumme vergleichen, damit nur echte Änderungen übertragen bzw. sonst hart verlinkt werden
+            $cmd = ['rsync', '-a', '--checksum', '--delete', '--numeric-ids', '--protect-args'];
+            if ($previous !== null) {
+                $cmd[] = '--link-dest=' . self::join($previous, '.zbg-system');
+            }
+            $remote = self::sshTarget($job, $cmd, $target);
+            array_push($cmd, '--', $stage . '/', $remote . '/');
+            $run = Exec::stream($cmd, $log, $cancel);
+            if ($run['code'] !== 0) {
+                throw new \RuntimeException('Rsync fehlgeschlagen für Systemdisk: ' . ($run['err'] ?: $run['out']));
+            }
+            return $summary;
+        } finally {
+            self::rmTree($stage);
+        }
+    }
+
+    private static function rmTree(string $dir): void
+    {
+        foreach (scandir($dir) ?: [] as $e) {
+            if ($e !== '.' && $e !== '..') {
+                is_dir("$dir/$e") && !is_link("$dir/$e") ? self::rmTree("$dir/$e") : @unlink("$dir/$e");
+            }
+        }
+        @rmdir($dir);
     }
 
     private static function stats(string $output): array
@@ -250,6 +296,12 @@ if [ "$target" != "$base" ]; then mkdir -- "$target"; fi
         }
         if ($cancel !== null && $cancel()) {
             throw new \RuntimeException('Abgebrochen');
+        }
+        if (!empty($job['system'])) {
+            $result['system'] = self::system($job, $destination, $previous, $log, $cancel);
+            if ($cancel !== null && $cancel()) {
+                throw new \RuntimeException('Abgebrochen');
+            }
         }
         if ($versioned) {
             if (empty($job['target']['ssh'])) {

@@ -22,6 +22,7 @@ final class Job
             'target' => ['path' => '', 'mode' => 'versioned', 'dataset' => '', 'ssh' => null, 'adoptExisting' => false],
             'schedule' => '0 2 * * *',
             'verify' => false,
+            'system' => false,
             'snapshots' => ['keep' => ['hourly' => 0, 'daily' => 7, 'weekly' => 4, 'monthly' => 3, 'yearly' => 0]],
             'versions' => ['keep' => ['daily' => 14, 'weekly' => 8, 'monthly' => 6]],
             'consistency' => ['mode' => 'crash', 'containers' => []],
@@ -97,6 +98,15 @@ final class Job
         }
         $j['schedule'] = implode(' ', preg_split('~\s+~', $j['schedule']));
         $j['verify'] = (bool)($in['verify'] ?? false);
+        $j['system'] = (bool)($in['system'] ?? false);
+        if ($j['system']) {
+            if ($j['method'] !== 'rsync') {
+                throw new UserError('Systemdisk-Backup nur mit rsync-Methode');
+            }
+            if ($checkSystem && !Zfs::dataset($j['source']['dataset'])['boot']) {
+                throw new UserError('Systemdisk-Backup nur für das Unraid-Boot-Dataset (/boot)');
+            }
+        }
         foreach (self::KEEP_SNAP as $k) {
             $j['snapshots']['keep'][$k] = self::int($in['snapshots']['keep'][$k] ?? $d['snapshots']['keep'][$k], 0, 1000);
         }

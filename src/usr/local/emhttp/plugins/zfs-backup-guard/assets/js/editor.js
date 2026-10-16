@@ -19,6 +19,7 @@
     name: '',
     enabled: true,
     verify: false,
+    system: false,
     source: { dataset: '', recursive: true, exclude: [] },
     method: 'rsync',
     target: { path: '', mode: 'versioned', dataset: '', ssh: null, adoptExisting: false },
@@ -228,6 +229,7 @@
               <div class="src-stats"><div><span>Belegt</span><b>${fmt.bytes(sel.used)}</b></div><div><span>Snapshots</span><b>${fmt.bytes(sel.usedSnap)}</b></div><div><span>Kompression</span><b>${sel.compressratio}×</b></div><div><span>Verschlüsselt</span><b>${sel.encrypted ? (sel.locked ? 'gesperrt' : 'ja') : 'nein'}</b></div></div>
               ${(sel.issues || []).filter((i) => i.level !== 'info' || i.code === 'boot').map((i) => `<div class="zbg-callout sm tone-${i.level === 'info' ? 'info' : i.level === 'block' ? 'err' : 'warn'}">${icon(i.level === 'info' ? 'info' : 'alert')}<div>${esc(i.msg)}</div></div>`).join('')}
             </div>
+            ${sel.boot && j.method === 'rsync' ? `<div class="ed-sub row between"><div><b>Komplette Systemdisk sichern</b><br><small class="muted">Zusätzlich Partitionstabellen der Boot-Disks, EFI- und BIOS-Bootdateien, Pool-Layout und LUKS-Header aller verschlüsselten Disks. Header + Passphrase geben Zugriff auf die Daten: nur auf ein geschütztes Ziel sichern.</small></div>${ui.toggle('system', j.system)}</div>` : ''}
             ${
               children.length
                 ? `<div class="ed-sub"><div class="sub-h"><h4>Kind-Datasets <small>${children.length}</small></h4>${ui.toggle('source.recursive', j.source.recursive, 'Rekursiv sichern')}</div>
@@ -269,6 +271,7 @@
     const ds = el.dataset.ds;
     j.source.dataset = ds;
     j.source.exclude = [];
+    if (!(Z.state.datasets || []).find((d) => d.name === ds)?.boot) j.system = false;
     const leaf = ds.split('/').pop();
     if (!j.name.trim() || ed.autoName) {
       j.name = `${leaf.charAt(0).toUpperCase() + leaf.slice(1)} → Array`;
@@ -401,6 +404,7 @@
     if (ed.job.method !== 'rsync') {
       ed.job.target.adoptExisting = false;
       ed.job.verify = false;
+      ed.job.system = false;
     }
     renderStep();
   };
@@ -726,6 +730,7 @@
         ${row('box', 'Konsistenz', j.consistency.mode === 'crash' ? 'Crash-konsistent' : `${j.consistency.mode === 'pause' ? 'Pausieren' : 'Stoppen'}: ${esc(j.consistency.containers.join(', ') || 'keine Container gewählt')}`, 4)}
         ${down ? row('cloud', 'Weitersicherung (3-2-1)', `${esc(down.tool)} „${esc(down.name)}“ · ${esc(Z.cron.describe(down.cron))} <span class="${chain.tone === 'ok' ? 'muted' : 'err'}">${chain.tone === 'ok' ? '✓ Zeitfenster passt' : '⚠ Zeitfenster knapp'}</span>`, 1) : ''}
         ${row('bell', 'Überwachung', `${{ all: 'Jeder Lauf', errors: 'Nur Fehler', none: 'Keine' }[j.notify]} · Warnung nach ${j.maxAgeHours} h${j.healthcheckUrl ? ' · Healthchecks' : ''}`, 5)}
+        ${j.method === 'rsync' && j.system ? row('server', 'Systemdisk', 'Partitionen, EFI, LUKS-Header → <span class="mono">.zbg-system/</span>', 1) : ''}
         ${j.method === 'rsync' ? row('shieldCheck', 'Prüfsummen', j.verify ? 'Nach jedem Backup prüfen' : 'Nur bei manuell gestarteter Prüfung', 5) : ''}
       </div>
       <div class="sum-flow"><h4 class="ed-h4">Ablauf eines Laufs</h4><ol>
@@ -734,6 +739,7 @@
         <li>Snapshot <code>${esc(j.source.dataset)}@zbg_${esc(j.id)}_JJJJMMTT-HHMMSS</code>${j.source.recursive ? ' (rekursiv, atomar)' : ''}</li>
         ${j.consistency.mode !== 'crash' && j.consistency.containers.length ? '<li>Container sofort wieder starten</li>' : ''}
         <li>${j.method === 'zfs' ? 'zfs send -I → receive -s -u' : j.target.mode === 'versioned' ? 'rsync --link-dest in neuen Versionsordner' : 'rsync --delete in den Spiegel'}</li>
+        ${j.method === 'rsync' && j.system ? '<li>Systemdisk: Partitionen, EFI, LUKS-Header nach <code>.zbg-system/</code></li>' : ''}
         ${j.method === 'rsync' && j.verify ? '<li>Prüfsummen mit dem Quell-Snapshot vergleichen</li>' : ''}
         <li>Aufräumen nach Aufbewahrungsregeln (nur eigene Snapshots, nur bei Erfolg)</li>
         <li>Verlauf, ${j.notify === 'none' ? '' : 'Benachrichtigung, '}${j.healthcheckUrl ? 'Healthcheck-Ping, ' : ''}fertig</li>

@@ -235,6 +235,9 @@ final class Runner
                     foreach ($plan['items'] as $item) {
                         $log('Probelauf: atomarer Snapshot ' . $item['name'] . '; ' . ($job['method'] === 'zfs' ? 'zfs send' : $item['action']));
                     }
+                    if (!empty($job['system'])) {
+                        $log('Systemdisk: würde Partitionen, EFI-Dateien und LUKS-Header sichern');
+                    }
                     $state['result'] = 'dryrun';
                 } else {
                     Notify::healthcheck($job, 'start');

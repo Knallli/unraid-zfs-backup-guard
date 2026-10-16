@@ -11,7 +11,7 @@ putenv('ZBG_ZEROBYTE_DB=' . sys_get_temp_dir() . '/zbg-test-zerobyte-' . getmypi
 date_default_timezone_set('Europe/Berlin');
 require __DIR__ . '/../src/usr/local/emhttp/plugins/zfs-backup-guard/include/bootstrap.php';
 
-use ZBG\{Cron, Downstream, History, Job, JobStore, Paths, Retention, RunState, UserError, UserScripts, Zfs};
+use ZBG\{Cron, Downstream, History, Job, JobStore, Paths, Retention, RunState, System, UserError, UserScripts, Zfs};
 
 $failures = 0;
 $count = 0;
@@ -262,6 +262,20 @@ eq('Snapshot user script', Zfs::classify('rsync_auto_20261013_020001', null), 'u
 $base = ['name' => 'Appdata → Array', 'source' => ['dataset' => 'cache/appdata'], 'target' => ['path' => '/mnt/user/backup/zfs-test/appdata', 'mode' => 'mirror']];
 $j = Job::normalize($base);
 eq('Job: ID aus Name', $j['id'], 'appdata-array');
+eq('Job: system standardmäßig aus', $j['system'], false);
+throws('Job: system nur mit rsync', static fn() => Job::normalize(['system' => true, 'method' => 'zfs', 'target' => ['dataset' => 'tank/x']] + $base, false));
+eq('Job: system mit rsync', Job::normalize(['system' => true] + $base, false)['system'], true);
+
+$lsblk = json_decode('{"blockdevices":[
+ {"name":"nvme0n1","type":"disk","children":[
+  {"name":"nvme0n1p1","type":"part","size":1048576,"partlabel":"BIOS Boot Partition"},
+  {"name":"nvme0n1p2","type":"part","size":534773760,"fstype":"vfat","partlabel":"EFI System Partition","parttype":"c12a7328-f81f-11d2-ba4b-00a0c93ec93b"},
+  {"name":"nvme0n1p3","type":"part","fstype":"zfs_member","partlabel":"Unraid Boot Partition"},
+  {"name":"nvme0n1p4","type":"part","fstype":"crypto_LUKS","children":[{"name":"nvme0n1p4","type":"crypt","fstype":"zfs_member"}]}]},
+ {"name":"sda","type":"disk","children":[{"name":"sda1","type":"part","fstype":"crypto_LUKS"}]},
+ {"name":"md1p1","type":"md","fstype":"xfs"}]}', true)['blockdevices'];
+eq('System: Geräteauswahl', System::select($lsblk, ['nvme0n1']), ['bios' => ['nvme0n1p1'], 'efi' => ['nvme0n1p2'], 'luks' => ['nvme0n1p4', 'sda1']]);
+eq('System: Boot-Disks aus zpool status', System::bootDisks("  pool: flash\n\tNAME  STATE\n\tflash  ONLINE\n\t  mirror-0  ONLINE\n\t    /dev/nvme1n1p3  ONLINE  0 0 0\n\t    /dev/nvme0n1p3  ONLINE  0 0 0\n", static fn(string $d): string => preg_replace('~p\d+$~', '', $d)), ['nvme1n1', 'nvme0n1']);
 eq('Job: Slug Umlaute', Job::slug('Über Größe'), 'ueber-groesse');
 throws('Job: Ziel in Quelle', static fn() => Job::normalize(['target' => ['path' => '/mnt/cache/appdata/backup']] + $base));
 throws('Job: Ausschluss nicht unter Quelle', static fn() => Job::normalize(['source' => ['dataset' => 'cache/appdata', 'exclude' => ['cache/domains']]] + $base));
@@ -353,6 +367,7 @@ $rsyncCmd = (new ReflectionMethod(ZBG\Rsync::class, 'command'))->invoke(null, ['
     ['items' => [['name' => 'p/data', 'rel' => '', 'targetRel' => ''], ['name' => 'p/data/vm', 'rel' => 'vm', 'targetRel' => null]]],
     ['name' => 'p/data', 'rel' => '', 'targetRel' => '', 'protect' => []], '/src/', '/dst', null, false, false);
 check('Rsync: gesperrtes Kind auch unter .datasets geschützt', in_array('--filter=P /.datasets/vm/***', $rsyncCmd, true) && in_array('--filter=P /vm/***', $rsyncCmd, true));
+check('Rsync: .zbg-system reserviert', in_array('--filter=P /.zbg-system', $rsyncCmd, true));
 RunState::write('fixture-b', ['state' => 'success', 'pid' => 0]);
 
 if (function_exists('pcntl_fork')) {
