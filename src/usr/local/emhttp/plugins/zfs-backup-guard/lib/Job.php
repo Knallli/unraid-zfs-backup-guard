@@ -73,8 +73,11 @@ final class Job
             $j['target']['path'] = Paths::normalizeTarget((string)($t['path'] ?? ''));
             $j['target']['mode'] = self::oneOf($t['mode'] ?? 'versioned', ['mirror', 'versioned'], 'Zielmodus');
             $j['target']['adoptExisting'] = $j['target']['mode'] === 'mirror' && (bool)($t['adoptExisting'] ?? false);
-            if (str_starts_with($j['target']['path'] . '/', self::mountOf($j['source']['dataset'], $checkSystem) . '/')) {
-                throw new UserError('Das Ziel liegt innerhalb der Quelle');
+            $sourceMount = self::mountOf($j['source']['dataset'], $checkSystem);
+            foreach (self::ssh($t['ssh'] ?? null) !== null ? [] : ($checkSystem ? Paths::aliases($j['target']['path']) : [$j['target']['path']]) as $alias) {
+                if (str_starts_with($alias . '/', $sourceMount . '/')) {
+                    throw new UserError('Das Ziel liegt innerhalb der Quelle');
+                }
             }
         } else {
             $j['target']['dataset'] = trim((string)($t['dataset'] ?? ''));

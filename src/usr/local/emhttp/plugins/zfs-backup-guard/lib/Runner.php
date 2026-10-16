@@ -532,7 +532,9 @@ final class Runner
         $result = [];
         foreach (JobStore::all() as $job) {
             $status = History::status($job, History::forJob($job['id'], 5000));
-            if ($job['enabled'] && in_array($status['state'], ['stale', 'never', 'failed'], true)) {
+            // auch fehlgeschlagene Jobs warnen, sobald der letzte Erfolg zu alt ist; "never" ohne Erfolg nicht (neue Jobs)
+            $tooOld = $status['ageSeconds'] !== null && $status['ageSeconds'] > $job['maxAgeHours'] * 3600;
+            if ($job['enabled'] && ($status['state'] === 'stale' || ($status['state'] === 'failed' && $tooOld))) {
                 try {
                     Notify::stale($job, $status);
                 } catch (\Throwable $e) {

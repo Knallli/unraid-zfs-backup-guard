@@ -47,6 +47,20 @@ final class Paths
     }
 
     /** Liegt $child (realpath) innerhalb von $root (realpath)? */
+    /** Pfad plus die realen Pool-/Disk-Pfade, hinter denen ein /mnt/user[0]/<share>-Pfad liegt. */
+    public static function aliases(string $path): array
+    {
+        $out = [$path];
+        if (preg_match('~^/mnt/user0?/([^/]+)(/.*)?$~', $path, $m)) {
+            foreach (glob('/mnt/*/' . addcslashes($m[1], '*?[]\\'), GLOB_ONLYDIR) ?: [] as $dir) {
+                if (!preg_match('~^/mnt/user0?/~', $dir . '/')) {
+                    $out[] = $dir . ($m[2] ?? '');
+                }
+            }
+        }
+        return $out;
+    }
+
     public static function within(string $root, string $child): bool
     {
         $root = rtrim($root, '/') . '/';

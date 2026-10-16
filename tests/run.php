@@ -346,6 +346,13 @@ throws('Job: gesperrter Job nicht löschbar', static fn() => JobStore::delete('f
 fclose($jobLock);
 RunState::write('fixture-b', ['state' => 'running', 'pid' => getmypid(), 'pidIdentity' => RunState::pidIdentity(getmypid()), 'start' => time()]);
 throws('Job: laufender Job nicht umbenennbar', static fn() => JobStore::save(['id' => 'renamed-b', 'name' => 'Renamed'] + $base, 'fixture-b'));
+throws('Job: ID-Änderung grundsätzlich abgelehnt', static fn() => JobStore::save(['id' => 'renamed-c', 'name' => 'Renamed'] + $base, 'fixture-a'));
+check('Paths::aliases: normaler Pfad unverändert', Paths::aliases('/mnt/cache/appdata') === ['/mnt/cache/appdata']);
+check('Paths::aliases: User-Share enthält den Pfad selbst', in_array('/mnt/user/appdata/x', Paths::aliases('/mnt/user/appdata/x'), true));
+$rsyncCmd = (new ReflectionMethod(ZBG\Rsync::class, 'command'))->invoke(null, ['target' => []],
+    ['items' => [['name' => 'p/data', 'rel' => '', 'targetRel' => ''], ['name' => 'p/data/vm', 'rel' => 'vm', 'targetRel' => null]]],
+    ['name' => 'p/data', 'rel' => '', 'targetRel' => '', 'protect' => []], '/src/', '/dst', null, false, false);
+check('Rsync: gesperrtes Kind auch unter .datasets geschützt', in_array('--filter=P /.datasets/vm/***', $rsyncCmd, true) && in_array('--filter=P /vm/***', $rsyncCmd, true));
 RunState::write('fixture-b', ['state' => 'success', 'pid' => 0]);
 
 if (function_exists('pcntl_fork')) {

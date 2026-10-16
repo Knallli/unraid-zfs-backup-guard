@@ -23,7 +23,7 @@
         await Z.loadDatasets();
         if (params.job || params.version) rs.mode = 'version';
         else if (params.dataset || params.snapshot) rs.mode = 'snapshot';
-        rs.dataset = params.dataset || rs.dataset || readableDatasets()[0]?.name || '';
+        rs.dataset = params.dataset || rs.dataset || Z.state.overview?.jobs[0]?.job.source.dataset || readableDatasets().find((d) => d.name.includes('/'))?.name || readableDatasets()[0]?.name || '';
         rs.job = params.job || rs.job || versionJobs()[0]?.id || '';
         await pickSource(params.snapshot || params.version);
       } catch (e) {

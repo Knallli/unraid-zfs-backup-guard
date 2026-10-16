@@ -52,8 +52,10 @@ df -B1 --output=avail -- "$probe"
                 $source = Zfs::dataset($item['name']);
                 if ($source['path'] !== null) {
                     $sourcePath = realpath($source['path']) ?: $source['path'];
-                    if (Paths::within($sourcePath, $base) || Paths::within($base, $sourcePath)) {
-                        throw new UserError('Quelle und Ziel dürfen sich nicht überlappen');
+                    foreach (Paths::aliases($base) as $alias) {
+                        if (Paths::within($sourcePath, $alias) || Paths::within($alias, $sourcePath)) {
+                            throw new UserError('Quelle und Ziel dürfen sich nicht überlappen');
+                        }
                     }
                 }
             }
@@ -125,8 +127,21 @@ df -B1 --output=avail -- "$probe"
         }
         $protect = $item['protect'];
         $prefix = (string)$item['targetRel'];
+        $own = (string)($item['rel'] ?? '');
         foreach ($plan['items'] as $other) {
-            if ($other['name'] === $item['name'] || $other['targetRel'] === null) {
+            if ($other['name'] === $item['name']) {
+                continue;
+            }
+            if ($other['targetRel'] === null) {
+                // nicht kopierbares Kind (nicht gemountet/gesperrt): dessen Zielordner nie per --delete leeren
+                $orel = (string)($other['rel'] ?? '');
+                if ($orel !== '' && ($own === '' || str_starts_with($orel, $own . '/'))) {
+                    $protect[] = '/' . ($own === '' ? $orel : substr($orel, strlen($own) + 1)) . '/';
+                }
+                if ($orel !== '' && $prefix === '') {
+                    // außerhalb gemountete Kinder liegen unter .datasets/<rel>
+                    $protect[] = '/.datasets/' . $orel . '/';
+                }
                 continue;
             }
             $rel = (string)$other['targetRel'];
@@ -200,6 +215,9 @@ if [ "$target" != "$base" ]; then mkdir -- "$target"; fi
             self::remote($job, 'root=$1; target=$2; [ "$(realpath -m -- "$target")" = "$target" ] || { echo "Ziel-Symlink verweigert" >&2; exit 1; }; mkdir -p -- "$target"; [ "$(realpath -- "$target")" = "$target" ]', [$destination, $target]);
             $source = Zfs::snapshotDir($item['name'], $snapshot) . '/';
             $log('Dataset: ' . $item['name']);
+            if (!$versioned && count(array_diff(scandir($source) ?: [], ['.', '..'])) === 0) {
+                self::remote($job, 't=$1; [ -z "$(find "$t" -mindepth 1 -maxdepth 1 ! -name ".zbg-*" ! -name ".datasets" -print -quit)" ] || { echo "Snapshot-Quelle ist leer, das Ziel nicht: --delete verweigert" >&2; exit 1; }', [$target]);
+            }
             $run = Exec::stream(self::command($job, $plan, $item, $source, $target, $previous === null ? null : self::join($previous, $item['targetRel']), false, false), $log, $cancel);
             if ($run['code'] !== 0) {
                 throw new \RuntimeException('Rsync fehlgeschlagen für ' . $item['name'] . ': ' . ($run['err'] ?: $run['out']));

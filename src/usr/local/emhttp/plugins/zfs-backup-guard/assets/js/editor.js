@@ -248,7 +248,7 @@
           }
           <div class="ed-fields">
             <label class="zbg-field"><span>Name des Jobs</span><input class="zbg-input" data-bind="name" value="${esc(j.name)}" placeholder="z. B. Appdata → Array" ${sel ? 'autofocus' : ''}></label>
-            <label class="zbg-field"><span>ID</span><input class="zbg-input mono" id="ed-id" data-bind="id" value="${esc(j.id)}" ${ed.originalId ? 'title="Ändern der ID trennt bestehende Snapshots vom Job"' : ''}><small class="muted">Snapshot-Präfix <code>zbg_&lt;id&gt;_</code></small></label>
+            <label class="zbg-field"><span>ID</span><input class="zbg-input mono" id="ed-id" data-bind="id" value="${esc(j.id)}" ${ed.originalId ? 'readonly title="Die ID ist nach dem Anlegen fest, Snapshots und Ziel gehören zu ihr"' : ''}><small class="muted">Snapshot-Präfix <code>zbg_&lt;id&gt;_</code></small></label>
           </div>
         </div>
       </div>`;

@@ -169,6 +169,9 @@ final class JobStore
     public static function save(array $input, ?string $originalId = null): array
     {
         $job = Job::normalize($input);
+        if ($originalId !== null && $originalId !== $job['id']) {
+            throw new UserError('Die Job-ID kann nicht geändert werden; Snapshots und Ziel gehören zur ID. Neuen Job anlegen.');
+        }
         return self::mutateJobs(array_values(array_unique(array_filter([$originalId, $job['id']], static fn($id) => $id !== null))),
             static function (array &$jobs) use ($job, $originalId): array {
                 foreach ($jobs as $existing) {
