@@ -4,7 +4,7 @@ name: release
 on:
   push:
     branches: [main]
-    paths: ['src/**', 'build.sh', 'tests/**']
+    paths: ['src/**', 'build.sh', 'tests/**', '.github/workflows/release.yml']
   workflow_dispatch:
 
 concurrency:
@@ -18,7 +18,7 @@ jobs:
   release:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           fetch-depth: 0
 
@@ -60,7 +60,7 @@ jobs:
           assert s.count('<CHANGES>\n') == 1
           open(p, 'w').write(s.replace('<CHANGES>\n', '<CHANGES>\n' + block, 1))
           EOF
-          ./build.sh
+          bash build.sh
 
       - name: Commit, Tag, Release
         env:
