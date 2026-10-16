@@ -2,8 +2,8 @@
 <!DOCTYPE PLUGIN [
 <!ENTITY name "zfs-backup-guard">
 <!ENTITY author "Knallli">
-<!ENTITY version "2026.10.16d">
-<!ENTITY md5 "8fb7b10ec8b4383ab9e6d36a8adfc65d">
+<!ENTITY version "2026.10.16e">
+<!ENTITY md5 "10e7e38cbfe00999996a9bdcca4d4fbf">
 <!ENTITY launch "Settings/ZFSBackupGuard">
 <!ENTITY gitURL "https://github.com/Knallli/unraid-zfs-backup-guard">
 <!ENTITY pluginURL "https://raw.githubusercontent.com/Knallli/unraid-zfs-backup-guard/main/plugin/&name;.plg">
@@ -15,6 +15,9 @@
 <PLUGIN name="&name;" author="&author;" version="&version;" launch="&launch;" pluginURL="&pluginURL;" support="&gitURL;/issues" icon="shield" min="6.12.0">
 
 <CHANGES>
+###2026.10.16e
+- Zerobyte-Erkennung entfernt: das Plugin liest keine Datenbanken anderer Apps mehr
+
 ###2026.10.16d
 - Systemdisk: LUKS-Header der Array-Disks über mdNp1 sichern, Anleitung listet nur gesicherte Header
 
