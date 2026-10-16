@@ -33,7 +33,7 @@ try {
     <?php foreach ($zbgDashRows as $zbgDashRow): ?>
     <tr>
       <td><?=$zbgDashEsc($zbgDashRow['job']['name'])?><br><small><?=$zbgDashEsc($zbgDashRow['job']['source']['dataset'])?></small></td>
-      <td><span style="color:<?=in_array($zbgDashRow['state'], ['failed'], true) ? '#d9534f' : ($zbgDashRow['state'] === 'stale' ? '#d99a26' : ($zbgDashRow['state'] === 'ok' ? '#239f85' : 'inherit'))?>"><?=$zbgDashEsc($zbgDashLabels[$zbgDashRow['state']] ?? 'Unbekannt')?></span><?php if ($zbgDashRow['step'] !== ''): ?><br><small><?=$zbgDashEsc($zbgDashRow['step'])?></small><?php endif; ?></td>
+      <td><span style="color:<?=in_array($zbgDashRow['state'], ['failed'], true) ? '#dc2626' : ($zbgDashRow['state'] === 'stale' ? '#ca8a04' : ($zbgDashRow['state'] === 'ok' ? '#16a34a' : 'inherit'))?>"><?=$zbgDashEsc($zbgDashLabels[$zbgDashRow['state']] ?? 'Unbekannt')?></span><?php if ($zbgDashRow['step'] !== ''): ?><br><small><?=$zbgDashEsc($zbgDashRow['step'])?></small><?php endif; ?></td>
       <td><?=$zbgDashRow['last'] ? $zbgDashEsc(date('d.m.Y H:i', (int)$zbgDashRow['last'])) : '–'?></td>
     </tr>
     <?php endforeach; ?>

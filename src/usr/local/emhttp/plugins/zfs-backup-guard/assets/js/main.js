@@ -16,7 +16,7 @@
     return `<div class="zbg-app">
       <header class="zbg-top">
         <div class="brand">
-          <div class="zbg-logo">${icon('shield')}<span class="logo-pulse"></span></div>
+          <div class="zbg-logo">${icon('shield')}</div>
           <div><b>ZFS Backup Guard</b><small data-region="hdrSub">Snapshots · Replikation · Wiederherstellung</small></div>
         </div>
         <nav class="zbg-tabs" role="tablist">${TABS.map(([v, l, ic]) => `<button type="button" role="tab" class="zbg-tab" data-view="${v}" data-act="tab">${icon(ic)}<span>${l}</span></button>`).join('')}</nav>
@@ -38,7 +38,7 @@
       : ov.jobs.some((j) => j.status.state === 'ok')
       ? `<span class="zbg-pill tone-ok">${icon('check')}Geschützte Jobs vorhanden</span>`
       : ov.jobs.length ? `<span class="zbg-pill tone-idle">${icon('shield')}Noch kein aktiver Schutz bestätigt</span>` : '';
-    return `${pill}${ui.btn('', { act: 'reloadAll', icon: 'refresh', title: 'Aktualisieren' })}${ui.btn('', { act: 'toggleTheme', icon: Z.root().dataset.theme === 'dark' ? 'sparkles' : 'snowflake', title: 'Hell/Dunkel (nur Vorschau)' })}`;
+    return `${pill}${ui.btn('', { act: 'reloadAll', icon: 'refresh', title: 'Aktualisieren' })}${window.ZBG_CONFIG?.csrf === 'dev' ? ui.btn('', { act: 'toggleTheme', icon: 'sliders', title: 'Hell/Dunkel (nur Vorschau)' }) : ''}`;
   };
   Z.updateHeader = () => Z.refresh('hdrAct');
 

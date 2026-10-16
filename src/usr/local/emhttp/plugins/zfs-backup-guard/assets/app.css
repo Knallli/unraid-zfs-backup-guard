@@ -1,63 +1,68 @@
 /* ZFS Backup Guard – alle Regeln unter .zbg, damit Unraid-Styles nicht kollidieren */
 
+/* Tokens nach shadcn/ui (Basis von Unraid 7 @unraid/ui), Primärfarbe = Unraid-Orange */
 .zbg {
-  --accent: #0fb5a5;
-  --accent-2: #3b82f6;
-  --accent-soft: rgba(15, 181, 165, 0.12);
-  --grad: linear-gradient(135deg, #14c9b5 0%, #2f8cf0 100%);
+  --accent: #f97316;
+  --accent-soft: rgba(249, 115, 22, 0.12);
+  --brand: linear-gradient(90deg, #e22828 0%, #ff8c2f 100%);
+  --on-accent: #ffffff;
+  --link: #c2410c;
+  --ring: rgba(249, 115, 22, 0.35);
   --ok: #16a34a;
-  --warn: #d97706;
+  --warn: #ca8a04;
   --err: #dc2626;
   --info: #2563eb;
-  --run: #0ea5e9;
-  --idle: #8a94a3;
+  --run: #2563eb;
+  --idle: #71717a;
 
-  --bg: #f4f6f9;
+  --bg: #fafafa;
   --surface: #ffffff;
-  --surface-2: #f7f9fb;
-  --surface-3: #eef2f6;
-  --border: #e3e8ee;
-  --border-2: #d3dae3;
-  --text: #17202b;
-  --text-2: #4a5666;
-  --muted: #7b8796;
-  --shadow: 0 1px 2px rgba(16, 24, 40, 0.05), 0 4px 16px rgba(16, 24, 40, 0.06);
-  --shadow-lg: 0 24px 64px rgba(16, 24, 40, 0.18);
-  --term-bg: #0d1218;
-  --term-fg: #cfd8e3;
-  --radius: 14px;
-  --radius-sm: 9px;
-  --font: Inter, ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
-  --mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace;
+  --surface-2: #fafafa;
+  --surface-3: #f4f4f5;
+  --border: #e4e4e7;
+  --border-2: #d4d4d8;
+  --text: #09090b;
+  --text-2: #3f3f46;
+  --muted: #71717a;
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+  --shadow-lg: 0 10px 38px -10px rgba(22, 23, 24, 0.35), 0 10px 20px -15px rgba(22, 23, 24, 0.2);
+  --term-bg: #09090b;
+  --term-fg: #e4e4e7;
+  --radius: 12px;
+  --radius-sm: 8px;
+  --font: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace;
 
   font-family: var(--font);
   font-size: 14px;
-  line-height: 1.45;
+  line-height: 1.5;
   color: var(--text);
   -webkit-font-smoothing: antialiased;
   position: relative;
 }
 .zbg[data-theme='dark'] {
-  --accent: #2dd4bf;
-  --accent-2: #60a5fa;
-  --accent-soft: rgba(45, 212, 191, 0.12);
+  --accent: #fb923c;
+  --accent-soft: rgba(251, 146, 60, 0.14);
+  --on-accent: #1c0a00;
+  --link: #fb923c;
+  --ring: rgba(251, 146, 60, 0.4);
   --ok: #22c55e;
-  --warn: #f59e0b;
-  --err: #f43f5e;
+  --warn: #eab308;
+  --err: #ef4444;
   --info: #60a5fa;
-  --run: #38bdf8;
-  --idle: #6b7685;
-  --bg: #0b1016;
-  --surface: #121921;
-  --surface-2: #161e28;
-  --surface-3: #1c2531;
-  --border: #222d3a;
-  --border-2: #2c3948;
-  --text: #e7edf4;
-  --text-2: #b4c0cd;
-  --muted: #7d8a99;
-  --shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 8px 24px rgba(0, 0, 0, 0.25);
-  --shadow-lg: 0 24px 80px rgba(0, 0, 0, 0.6);
+  --run: #60a5fa;
+  --idle: #a1a1aa;
+  --bg: #09090b;
+  --surface: #18181b;
+  --surface-2: #1c1c1f;
+  --surface-3: #27272a;
+  --border: #27272a;
+  --border-2: #3f3f46;
+  --text: #fafafa;
+  --text-2: #d4d4d8;
+  --muted: #a1a1aa;
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow-lg: 0 16px 48px rgba(0, 0, 0, 0.7);
   color-scheme: dark;
 }
 .zbg *,
@@ -146,27 +151,11 @@
 @keyframes zbg-up {
   from {
     opacity: 0;
-    transform: translateY(8px);
+    transform: translateY(4px);
   }
   to {
     opacity: 1;
     transform: none;
-  }
-}
-@keyframes zbg-pulse {
-  0% {
-    box-shadow: 0 0 0 0 var(--pulse, rgba(15, 181, 165, 0.45));
-  }
-  70% {
-    box-shadow: 0 0 0 10px transparent;
-  }
-  100% {
-    box-shadow: 0 0 0 0 transparent;
-  }
-}
-@keyframes zbg-stripes {
-  to {
-    background-position: 28px 0;
   }
 }
 @keyframes zbg-shimmer {
@@ -203,7 +192,8 @@
 .zbg-app {
   background: var(--bg);
   border: 1px solid var(--border);
-  border-radius: 18px;
+  box-shadow: var(--shadow);
+  border-radius: var(--radius);
   overflow: hidden;
   min-height: 520px;
 }
@@ -239,31 +229,24 @@
   position: relative;
   width: 38px;
   height: 38px;
-  border-radius: 11px;
-  background: var(--grad);
+  border-radius: var(--radius-sm);
+  background: var(--brand);
   display: grid;
   place-items: center;
   color: #fff;
-  box-shadow: 0 6px 18px rgba(20, 180, 170, 0.35);
+  box-shadow: 0 2px 8px -2px rgba(226, 40, 40, 0.45);
 }
 .zbg .zbg-logo .zi {
   width: 21px;
   height: 21px;
   stroke-width: 2.2;
 }
-.zbg .logo-pulse {
-  position: absolute;
-  inset: 0;
-  border-radius: inherit;
-  animation: zbg-pulse 2.8s infinite;
-  pointer-events: none;
-}
 .zbg-tabs {
   display: flex;
   gap: 2px;
   background: var(--surface-3);
   padding: 4px;
-  border-radius: 12px;
+  border-radius: var(--radius-sm);
   margin-left: auto;
   overflow-x: auto;
   max-width: 100%;
@@ -275,22 +258,21 @@
   padding: 7px 13px;
   border: 0;
   background: none;
-  border-radius: 9px;
+  border-radius: var(--radius-sm);
   cursor: pointer;
   color: var(--text-2);
-  font-weight: 550;
+  font-weight: 500;
   font-size: 13.5px;
   white-space: nowrap;
   transition: background 0.15s, color 0.15s;
 }
 .zbg .zbg-tab:hover {
   color: var(--text);
-  background: color-mix(in srgb, var(--surface) 60%, transparent);
 }
 .zbg .zbg-tab.active {
   background: var(--surface);
   color: var(--text);
-  box-shadow: var(--shadow);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1), 0 1px 2px -1px rgba(0, 0, 0, 0.1);
 }
 .zbg .zbg-tab.active .zi {
   color: var(--accent);
@@ -328,21 +310,21 @@
   align-items: center;
   justify-content: center;
   gap: 7px;
-  height: 34px;
-  padding: 0 13px;
-  border-radius: 9px;
-  border: 1px solid var(--border-2);
+  height: 36px;
+  padding: 0 14px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
   background: var(--surface);
   color: var(--text);
-  font-weight: 600;
+  font-weight: 500;
+  box-shadow: var(--shadow);
   font-size: 13px;
   cursor: pointer;
   white-space: nowrap;
   transition: transform 0.08s, background 0.15s, border-color 0.15s, box-shadow 0.15s, opacity 0.15s;
 }
 .zbg .zbg-btn:hover:not(:disabled) {
-  border-color: var(--accent);
-  color: var(--accent);
+  background: var(--surface-3);
 }
 .zbg .zbg-btn:active:not(:disabled) {
   transform: translateY(1px);
@@ -350,8 +332,8 @@
 .zbg .zbg-btn:focus-visible,
 .zbg button:focus-visible,
 .zbg input:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
+  outline: none;
+  box-shadow: 0 0 0 3px var(--ring);
 }
 .zbg .zbg-btn:disabled {
   opacity: 0.45;
@@ -360,6 +342,7 @@
 .zbg .zbg-btn.ghost {
   background: transparent;
   border-color: transparent;
+  box-shadow: none;
   color: var(--text-2);
 }
 .zbg .zbg-btn.ghost:hover:not(:disabled) {
@@ -368,23 +351,22 @@
   color: var(--text);
 }
 .zbg .zbg-btn.icon-only {
-  width: 34px;
+  width: 36px;
   padding: 0;
 }
 .zbg .zbg-btn.sm {
-  height: 30px;
+  height: 32px;
   font-size: 12.5px;
 }
 .zbg .zbg-btn.primary {
-  background: var(--grad);
+  background: var(--accent);
   border-color: transparent;
-  color: #fff;
-  box-shadow: 0 4px 14px rgba(20, 170, 170, 0.28);
+  color: var(--on-accent);
 }
 .zbg .zbg-btn.primary:hover:not(:disabled) {
-  color: #fff;
-  filter: brightness(1.07);
-  box-shadow: 0 6px 20px rgba(20, 170, 170, 0.38);
+  background: var(--accent);
+  color: var(--on-accent);
+  filter: brightness(1.08);
 }
 .zbg .zbg-btn.danger {
   background: var(--err);
@@ -392,6 +374,7 @@
   color: #fff;
 }
 .zbg .zbg-btn.danger:hover:not(:disabled) {
+  background: var(--err);
   color: #fff;
   filter: brightness(1.08);
 }
@@ -414,7 +397,7 @@
   padding: 2px 8px;
   border-radius: 99px;
   font-size: 11.5px;
-  font-weight: 650;
+  font-weight: 600;
   color: var(--tone);
   background: color-mix(in srgb, var(--tone) 13%, transparent);
   white-space: nowrap;
@@ -432,7 +415,6 @@
   background: var(--tone);
   display: inline-block;
   flex: none;
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--tone) 20%, transparent);
 }
 
 /* ---------- Hero ---------- */
@@ -442,7 +424,7 @@
   grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr);
   gap: 22px;
   padding: 26px;
-  border-radius: 20px;
+  border-radius: var(--radius);
   background: var(--surface);
   border: 1px solid var(--border);
   box-shadow: var(--shadow);
@@ -459,8 +441,7 @@
   inset: -40% -10% auto -10%;
   height: 160%;
   z-index: -1;
-  background: radial-gradient(600px 260px at 12% 30%, color-mix(in srgb, var(--tone) 22%, transparent), transparent 70%),
-    radial-gradient(500px 240px at 90% 0%, color-mix(in srgb, var(--accent-2) 12%, transparent), transparent 70%);
+  background: none;
   pointer-events: none;
 }
 .zbg .hero-main {
@@ -473,14 +454,14 @@
   align-items: center;
   gap: 6px;
   font-size: 12px;
-  font-weight: 650;
+  font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.08em;
   color: var(--tone);
 }
 .zbg .hero-text h1 {
   font-size: 30px;
-  font-weight: 750;
+  font-weight: 700;
   letter-spacing: -0.025em;
   margin: 4px 0 6px;
   line-height: 1.15;
@@ -508,9 +489,8 @@
 .zbg .stat {
   background: color-mix(in srgb, var(--surface-2) 80%, transparent);
   border: 1px solid var(--border);
-  border-radius: 12px;
+  border-radius: var(--radius-sm);
   padding: 11px 13px;
-  backdrop-filter: blur(6px);
 }
 .zbg .stat span {
   display: flex;
@@ -518,7 +498,7 @@
   gap: 6px;
   color: var(--muted);
   font-size: 12px;
-  font-weight: 550;
+  font-weight: 500;
 }
 .zbg .stat span .zi {
   width: 14px;
@@ -527,7 +507,7 @@
 .zbg .stat b {
   display: block;
   font-size: 22px;
-  font-weight: 720;
+  font-weight: 700;
   letter-spacing: -0.02em;
   margin-top: 2px;
 }
@@ -550,7 +530,7 @@
   display: flex;
   align-items: center;
   gap: 6px;
-  font-weight: 650;
+  font-weight: 600;
 }
 .zbg .pool-h .ok,
 .zbg .pool-h .err {
@@ -586,7 +566,6 @@
   stroke: var(--tone);
   stroke-linecap: round;
   transition: stroke-dasharray 0.6s ease;
-  filter: drop-shadow(0 0 6px color-mix(in srgb, var(--tone) 45%, transparent));
 }
 .zbg-ring .ring-seg.tone-none {
   stroke: transparent;
@@ -602,7 +581,7 @@
 }
 .zbg-ring .ring-center strong {
   font-size: 30px;
-  font-weight: 760;
+  font-weight: 700;
   letter-spacing: -0.03em;
   line-height: 1;
 }
@@ -628,7 +607,7 @@
 .zbg .zbg-meter div {
   height: 100%;
   border-radius: inherit;
-  background: linear-gradient(90deg, color-mix(in srgb, var(--tone) 70%, #fff), var(--tone));
+  background: var(--tone);
   transition: width 0.6s ease;
 }
 
@@ -638,16 +617,16 @@
   align-items: center;
   gap: 16px;
   padding: 14px 18px;
-  border-radius: 16px;
-  background: linear-gradient(120deg, color-mix(in srgb, var(--accent) 14%, var(--surface)), color-mix(in srgb, var(--accent-2) 12%, var(--surface)));
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--accent) 8%, var(--surface));
   border: 1px solid color-mix(in srgb, var(--accent) 30%, var(--border));
 }
 .zbg .bn-ic {
   width: 40px;
   height: 40px;
-  border-radius: 12px;
-  background: var(--grad);
-  color: #fff;
+  border-radius: var(--radius-sm);
+  background: var(--accent);
+  color: var(--on-accent);
   display: grid;
   place-items: center;
   flex: none;
@@ -671,7 +650,7 @@
   gap: 10px;
   align-items: flex-start;
   padding: 11px 14px;
-  border-radius: 12px;
+  border-radius: var(--radius-sm);
   border: 1px dashed var(--border-2);
   color: var(--text-2);
   font-size: 13px;
@@ -685,7 +664,7 @@
   display: flex;
   gap: 10px;
   padding: 12px 14px;
-  border-radius: 12px;
+  border-radius: var(--radius-sm);
   background: color-mix(in srgb, var(--tone) 9%, var(--surface));
   border: 1px solid color-mix(in srgb, var(--tone) 28%, transparent);
   color: var(--text);
@@ -715,7 +694,7 @@
 }
 .zbg-section-h h2 {
   font-size: 19px;
-  font-weight: 720;
+  font-weight: 700;
   letter-spacing: -0.015em;
 }
 .zbg .toolbar {
@@ -754,14 +733,14 @@
   opacity: 0.85;
 }
 .zbg-job:hover {
-  transform: translateY(-2px);
-  box-shadow: var(--shadow), 0 14px 34px rgba(16, 24, 40, 0.1);
+  border-color: var(--border-2);
+  box-shadow: 0 4px 12px -4px rgba(0, 0, 0, 0.12);
 }
 .zbg-job.running {
   border-color: color-mix(in srgb, var(--run) 50%, var(--border));
 }
 .zbg-job.running::before {
-  background: linear-gradient(90deg, var(--run), var(--accent), var(--run));
+  background: var(--run);
   background-size: 200% 100%;
   animation: zbg-shimmer 1.6s linear infinite;
 }
@@ -771,7 +750,7 @@
 }
 .zbg-job.skel {
   min-height: 260px;
-  background: linear-gradient(90deg, var(--surface) 0%, var(--surface-2) 50%, var(--surface) 100%);
+  background: var(--surface-2);
   background-size: 200% 100%;
   animation: zbg-shimmer 1.4s linear infinite;
 }
@@ -783,7 +762,7 @@
 .zbg .job-ic {
   width: 42px;
   height: 42px;
-  border-radius: 12px;
+  border-radius: var(--radius-sm);
   display: grid;
   place-items: center;
   flex: none;
@@ -793,7 +772,6 @@
 }
 .zbg .tone-err .job-ic,
 .zbg .tone-run .job-ic {
-  animation: zbg-pulse 2s infinite;
 }
 .zbg .job-ic .zi {
   width: 21px;
@@ -834,7 +812,7 @@
   gap: 2px 8px;
   align-items: center;
   padding: 9px 12px;
-  border-radius: 11px;
+  border-radius: var(--radius-sm);
   background: var(--surface-2);
   border: 1px solid var(--border);
 }
@@ -865,14 +843,14 @@
   justify-self: center;
   width: 2px;
   height: 10px;
-  background: repeating-linear-gradient(180deg, var(--border-2) 0 3px, transparent 3px 5px);
+  background: var(--border-2);
 }
 .zbg .job-route .flow i,
 .zbg .job-route .flow .zi {
   display: none;
 }
 .zbg-job.running .job-route .flow {
-  background: repeating-linear-gradient(180deg, var(--run) 0 3px, transparent 3px 5px);
+  background: var(--run);
   background-size: 2px 10px;
   animation: zbg-flow 0.6s linear infinite;
 }
@@ -890,12 +868,12 @@
   display: block;
   font-size: 11.5px;
   color: var(--muted);
-  font-weight: 550;
+  font-weight: 500;
 }
 .zbg .job-stats b {
   display: block;
   font-size: 13.5px;
-  font-weight: 650;
+  font-weight: 600;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -908,7 +886,7 @@
   width: 100%;
   text-align: left;
   padding: 10px 12px;
-  border-radius: 11px;
+  border-radius: var(--radius-sm);
   background: color-mix(in srgb, var(--run) 9%, transparent);
   border: 1px solid color-mix(in srgb, var(--run) 25%, transparent);
   cursor: pointer;
@@ -964,7 +942,7 @@
   display: grid;
   place-items: center;
   border: 1px dashed var(--border);
-  border-radius: 8px;
+  border-radius: var(--radius);
 }
 .zbg-job footer {
   display: flex;
@@ -992,7 +970,7 @@
 .zbg-job.add span {
   width: 52px;
   height: 52px;
-  border-radius: 16px;
+  border-radius: var(--radius);
   display: grid;
   place-items: center;
   background: var(--surface-3);
@@ -1010,8 +988,8 @@
   border-color: var(--accent);
 }
 .zbg-job.add:hover span {
-  background: var(--grad);
-  color: #fff;
+  background: var(--accent);
+  color: var(--on-accent);
   transform: rotate(90deg);
 }
 
@@ -1027,16 +1005,15 @@
 .zbg .zbg-progress > div {
   height: 100%;
   border-radius: inherit;
-  background: var(--grad);
+  background: var(--accent);
   transition: width 0.8s ease;
 }
 .zbg .zbg-progress.tone-ok > div {
   background: var(--ok);
 }
 .zbg .zbg-progress.striped > div {
-  background-image: linear-gradient(45deg, rgba(255, 255, 255, 0.22) 25%, transparent 25%, transparent 50%, rgba(255, 255, 255, 0.22) 50%, rgba(255, 255, 255, 0.22) 75%, transparent 75%), var(--grad);
+  background-image: none;
   background-size: 28px 28px, 100% 100%;
-  animation: zbg-stripes 0.9s linear infinite;
 }
 
 /* ---------- Leere Zustände, Skeleton ---------- */
@@ -1058,7 +1035,7 @@
 .zbg .empty-ic {
   width: 56px;
   height: 56px;
-  border-radius: 18px;
+  border-radius: var(--radius);
   display: grid;
   place-items: center;
   background: var(--accent-soft);
@@ -1087,7 +1064,7 @@
 }
 .zbg .zbg-skel div {
   height: 14px;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   background: linear-gradient(90deg, var(--surface-3) 0%, var(--surface-2) 50%, var(--surface-3) 100%);
   background-size: 200% 100%;
   animation: zbg-shimmer 1.3s linear infinite;
@@ -1164,7 +1141,7 @@
   padding: 7px 10px 7px calc(10px + var(--d) * 16px);
   border: 0;
   background: none;
-  border-radius: 8px;
+  border-radius: var(--radius);
   cursor: pointer;
   text-align: left;
   color: var(--text-2);
@@ -1178,7 +1155,7 @@
 .zbg .ds-item.on {
   background: var(--accent-soft);
   color: var(--text);
-  font-weight: 650;
+  font-weight: 600;
 }
 .zbg .ds-item.on::before {
   content: '';
@@ -1224,7 +1201,7 @@
   gap: 8px;
   align-items: center;
   font-size: 18px;
-  font-weight: 720;
+  font-weight: 700;
   font-family: var(--mono);
 }
 .zbg .panel-h h2 .zi {
@@ -1246,19 +1223,19 @@
 }
 .zbg .snap-stats > div {
   padding: 10px 12px;
-  border-radius: 11px;
+  border-radius: var(--radius-sm);
   background: var(--surface-2);
   border: 1px solid var(--border);
 }
 .zbg .snap-stats span {
   font-size: 11.5px;
   color: var(--muted);
-  font-weight: 550;
+  font-weight: 500;
 }
 .zbg .snap-stats b {
   display: block;
   font-size: 18px;
-  font-weight: 720;
+  font-weight: 700;
 }
 
 /* Zeitstrahl */
@@ -1272,7 +1249,7 @@
   position: relative;
   height: 26px;
   border-radius: 99px;
-  background: linear-gradient(90deg, var(--surface-3), color-mix(in srgb, var(--accent) 10%, var(--surface-3)));
+  background: var(--surface-3);
   border: 1px solid var(--border);
 }
 .zbg .tl-track i {
@@ -1328,7 +1305,7 @@
 .zbg .zbg-table-wrap {
   overflow-x: auto;
   border: 1px solid var(--border);
-  border-radius: 12px;
+  border-radius: var(--radius-sm);
   background: var(--surface);
 }
 .zbg .zbg-table {
@@ -1338,13 +1315,13 @@
 }
 .zbg .zbg-table th {
   text-align: left;
-  font-size: 11.5px;
-  font-weight: 650;
+  font-size: 12.5px;
+  font-weight: 500;
   color: var(--muted);
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
+  text-transform: none;
+  letter-spacing: normal;
   padding: 10px 12px;
-  background: var(--surface-2);
+  background: transparent;
   border-bottom: 1px solid var(--border);
   white-space: nowrap;
 }
@@ -1401,7 +1378,7 @@
 .zbg .usebar i {
   display: block;
   height: 100%;
-  background: var(--grad);
+  background: var(--accent);
   border-radius: inherit;
 }
 .zbg .zbg-foot {
@@ -1433,7 +1410,7 @@
   width: 100%;
   height: 38px;
   padding: 0 12px;
-  border-radius: 10px;
+  border-radius: var(--radius-sm);
   border: 1px solid var(--border-2);
   background: var(--surface);
   color: var(--text);
@@ -1448,7 +1425,7 @@
 .zbg .zbg-select:focus {
   outline: none;
   border-color: var(--accent);
-  box-shadow: 0 0 0 4px var(--accent-soft);
+  box-shadow: 0 0 0 3px var(--ring);
 }
 .zbg .zbg-input.big {
   height: 46px;
@@ -1468,7 +1445,7 @@
 }
 .zbg .zbg-field > span {
   font-size: 12.5px;
-  font-weight: 650;
+  font-weight: 600;
   color: var(--text-2);
 }
 .zbg .zbg-field > span small {
@@ -1489,7 +1466,7 @@
   height: 36px;
   padding: 0 12px;
   border: 1px solid var(--border-2);
-  border-radius: 10px;
+  border-radius: var(--radius-sm);
   background: var(--surface);
   color: var(--muted);
   min-width: 200px;
@@ -1521,7 +1498,7 @@
   display: inline-flex;
   background: var(--surface-3);
   padding: 3px;
-  border-radius: 10px;
+  border-radius: var(--radius-sm);
   gap: 2px;
   flex-wrap: wrap;
 }
@@ -1532,7 +1509,7 @@
   border: 0;
   background: none;
   padding: 6px 12px;
-  border-radius: 8px;
+  border-radius: var(--radius);
   cursor: pointer;
   font-weight: 600;
   font-size: 12.5px;
@@ -1631,7 +1608,7 @@
   background: var(--accent-soft);
   border-color: var(--accent);
   color: var(--accent);
-  font-weight: 650;
+  font-weight: 600;
 }
 .zbg .ret-presets .chip {
   font-family: var(--font);
@@ -1643,7 +1620,7 @@
   align-items: center;
   gap: 8px;
   padding: 6px 6px 6px 12px;
-  border-radius: 10px;
+  border-radius: var(--radius-sm);
   background: var(--term-bg);
   color: var(--term-fg);
   font-family: var(--mono);
@@ -1666,7 +1643,7 @@
 .zbg .zbg-term {
   margin: 0;
   padding: 14px;
-  border-radius: 12px;
+  border-radius: var(--radius-sm);
   background: var(--term-bg);
   color: var(--term-fg);
   font-family: var(--mono);
@@ -1712,7 +1689,7 @@
 }
 .zbg .zbg-kv dt {
   color: var(--muted);
-  font-weight: 550;
+  font-weight: 500;
 }
 .zbg .zbg-kv dd {
   margin: 0;
@@ -1762,7 +1739,6 @@
   position: absolute;
   inset: 0;
   background: rgba(8, 12, 18, 0.5);
-  backdrop-filter: blur(4px);
   opacity: 0;
   transition: opacity 0.2s;
 }
@@ -1777,7 +1753,7 @@
   max-height: calc(100vh - 48px);
   background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: 18px;
+  border-radius: var(--radius);
   box-shadow: var(--shadow-lg);
   opacity: 0;
   transform: translateY(14px) scale(0.98);
@@ -1790,7 +1766,7 @@
 .zbg-layer.sheet .zbg-dialog {
   height: 100vh;
   max-height: none;
-  border-radius: 20px 0 0 20px;
+  border-radius: 8px 0 0 20px;
   transform: translateX(40px);
 }
 .zbg-layer.sheet.in .zbg-dialog {
@@ -1820,7 +1796,7 @@
   gap: 9px;
   align-items: center;
   font-size: 17px;
-  font-weight: 720;
+  font-weight: 700;
   min-width: 0;
 }
 .zbg .zbg-dialog > header h2 .zi {
@@ -1859,7 +1835,7 @@ body.zbg-noscroll {
 .zbg .cf-ic {
   width: 42px;
   height: 42px;
-  border-radius: 12px;
+  border-radius: var(--radius-sm);
   display: grid;
   place-items: center;
   flex: none;
@@ -1882,7 +1858,7 @@ body.zbg-noscroll {
   padding: 10px 12px;
   border: 0;
   background: none;
-  border-radius: 10px;
+  border-radius: var(--radius-sm);
   cursor: pointer;
   text-align: left;
 }
@@ -1927,13 +1903,13 @@ body.zbg-noscroll .zbg .zbg-toasts {
   gap: 10px;
   max-width: 420px;
   padding: 11px 15px;
-  border-radius: 12px;
+  border-radius: var(--radius-sm);
   background: var(--surface);
   border: 1px solid var(--border);
   border-left: 4px solid var(--tone);
   box-shadow: var(--shadow-lg);
   font-size: 13px;
-  font-weight: 550;
+  font-weight: 500;
   opacity: 0;
   transform: translateY(10px);
   transition: opacity 0.25s, transform 0.25s;
@@ -1952,7 +1928,7 @@ body.zbg-noscroll .zbg .zbg-toasts {
   gap: 22px;
   align-items: center;
   padding: 16px;
-  border-radius: 14px;
+  border-radius: var(--radius);
   background: color-mix(in srgb, var(--tone) 7%, var(--surface-2));
   border: 1px solid color-mix(in srgb, var(--tone) 22%, var(--border));
   margin-bottom: 16px;
@@ -1973,7 +1949,7 @@ body.zbg-noscroll .zbg .zbg-toasts {
   gap: 10px;
   align-items: center;
   padding: 7px 8px;
-  border-radius: 9px;
+  border-radius: var(--radius-sm);
   color: var(--muted);
   position: relative;
 }
@@ -2006,14 +1982,13 @@ body.zbg-noscroll .zbg .zbg-toasts {
 }
 .zbg .live-steps .st-active {
   color: var(--text);
-  font-weight: 650;
+  font-weight: 600;
   background: color-mix(in srgb, var(--run) 8%, transparent);
 }
 .zbg .live-steps .st-active .st-ic {
   background: var(--run);
   color: #fff;
   --pulse: color-mix(in srgb, var(--run) 50%, transparent);
-  animation: zbg-pulse 1.6s infinite;
 }
 .zbg .live-steps .st-failed .st-ic {
   background: var(--err);
@@ -2095,7 +2070,7 @@ body.zbg-noscroll .zbg .zbg-toasts {
   padding: 9px 10px;
   border: 0;
   background: none;
-  border-radius: 11px;
+  border-radius: var(--radius-sm);
   cursor: pointer;
   text-align: left;
   color: var(--muted);
@@ -2137,9 +2112,9 @@ body.zbg-noscroll .zbg .zbg-toasts {
   box-shadow: var(--shadow);
 }
 .zbg .ed-step.cur .n {
-  background: var(--grad);
+  background: var(--accent);
   border-color: transparent;
-  color: #fff;
+  color: var(--on-accent);
 }
 .zbg .ed-step.cur .t b {
   color: var(--text);
@@ -2167,7 +2142,7 @@ body.zbg-noscroll .zbg .zbg-toasts {
   gap: 10px;
   align-items: center;
   font-size: 22px;
-  font-weight: 740;
+  font-weight: 700;
   letter-spacing: -0.02em;
 }
 .zbg .ed-h .zi {
@@ -2209,7 +2184,7 @@ body.zbg-noscroll .zbg .zbg-toasts {
 }
 .zbg .ds-tree.big {
   border: 1px solid var(--border);
-  border-radius: 12px;
+  border-radius: var(--radius-sm);
   padding: 6px;
   max-height: 440px;
   overflow: auto;
@@ -2225,7 +2200,7 @@ body.zbg-noscroll .zbg .zbg-toasts {
   justify-content: center;
   height: 150px;
   border: 2px dashed var(--border-2);
-  border-radius: 14px;
+  border-radius: var(--radius);
   color: var(--muted);
   margin-bottom: 16px;
 }
@@ -2233,9 +2208,9 @@ body.zbg-noscroll .zbg .zbg-toasts {
   transform: rotate(180deg);
 }
 .zbg .src-card {
-  border-radius: 14px;
+  border-radius: var(--radius);
   padding: 16px;
-  background: linear-gradient(135deg, color-mix(in srgb, var(--accent) 10%, var(--surface)), var(--surface));
+  background: color-mix(in srgb, var(--accent) 6%, var(--surface));
   border: 1px solid color-mix(in srgb, var(--accent) 30%, var(--border));
   margin-bottom: 14px;
 }
@@ -2248,9 +2223,9 @@ body.zbg-noscroll .zbg .zbg-toasts {
   width: 34px;
   height: 34px;
   padding: 7px;
-  border-radius: 10px;
-  background: var(--grad);
-  color: #fff;
+  border-radius: var(--radius-sm);
+  background: var(--accent);
+  color: var(--on-accent);
 }
 .zbg .src-h div {
   display: flex;
@@ -2279,7 +2254,7 @@ body.zbg-noscroll .zbg .zbg-toasts {
 }
 .zbg .ed-sub {
   padding: 14px 16px;
-  border-radius: 14px;
+  border-radius: var(--radius);
   border: 1px solid var(--border);
   background: var(--surface-2);
   margin: 14px 0;
@@ -2320,7 +2295,7 @@ body.zbg-noscroll .zbg .zbg-toasts {
   gap: 9px;
   align-items: center;
   padding: 6px 8px 6px calc(8px + var(--d) * 18px);
-  border-radius: 8px;
+  border-radius: var(--radius);
   cursor: pointer;
   font-size: 13px;
 }
@@ -2358,7 +2333,7 @@ body.zbg-noscroll .zbg .zbg-toasts {
   gap: 13px;
   align-items: flex-start;
   padding: 15px;
-  border-radius: 14px;
+  border-radius: var(--radius);
   border: 1.5px solid var(--border);
   background: var(--surface);
   cursor: pointer;
@@ -2368,7 +2343,7 @@ body.zbg-noscroll .zbg .zbg-toasts {
 }
 .zbg .ed-card:hover {
   border-color: var(--border-2);
-  transform: translateY(-1px);
+  transform: none;
 }
 .zbg .ed-card.on {
   border-color: var(--accent);
@@ -2377,7 +2352,7 @@ body.zbg-noscroll .zbg .zbg-toasts {
 .zbg .ec-ic {
   width: 38px;
   height: 38px;
-  border-radius: 11px;
+  border-radius: var(--radius-sm);
   display: grid;
   place-items: center;
   flex: none;
@@ -2386,8 +2361,8 @@ body.zbg-noscroll .zbg .zbg-toasts {
   transition: all 0.2s;
 }
 .zbg .ed-card.on .ec-ic {
-  background: var(--grad);
-  color: #fff;
+  background: var(--accent);
+  color: var(--on-accent);
 }
 .zbg .ec-t {
   display: flex;
@@ -2403,7 +2378,7 @@ body.zbg-noscroll .zbg .zbg-toasts {
 .zbg .ec-t b em {
   font-style: normal;
   font-size: 11px;
-  font-weight: 650;
+  font-weight: 600;
   padding: 1px 7px;
   border-radius: 99px;
   margin-left: 4px;
@@ -2431,7 +2406,7 @@ body.zbg-noscroll .zbg .zbg-toasts {
   display: flex;
   flex-direction: column;
   padding: 12px 16px;
-  border-radius: 12px;
+  border-radius: var(--radius-sm);
   background: var(--term-bg);
   color: var(--term-fg);
   font-size: 12px;
@@ -2455,7 +2430,7 @@ body.zbg-noscroll .zbg .zbg-toasts {
   align-items: center;
   font-size: 13px;
   padding: 6px 10px;
-  border-radius: 8px;
+  border-radius: var(--radius);
 }
 .zbg .chk.good {
   color: var(--ok);
@@ -2523,7 +2498,7 @@ body.zbg-noscroll .zbg .zbg-toasts {
 }
 .zbg .cron-box {
   padding: 18px;
-  border-radius: 16px;
+  border-radius: var(--radius);
   background: var(--surface-2);
   border: 1px solid var(--border);
 }
@@ -2560,7 +2535,7 @@ body.zbg-noscroll .zbg .zbg-toasts {
 .zbg .cp-next span.first {
   background: var(--accent-soft);
   color: var(--accent);
-  font-weight: 650;
+  font-weight: 600;
 }
 .zbg .ret-presets {
   display: flex;
@@ -2625,7 +2600,7 @@ body.zbg-noscroll .zbg .zbg-toasts {
   --lv: var(--text);
 }
 .zbg .slider output {
-  font-weight: 750;
+  font-weight: 700;
   font-variant-numeric: tabular-nums;
   text-align: right;
   font-size: 15px;
@@ -2664,7 +2639,7 @@ body.zbg-noscroll .zbg .zbg-toasts {
 }
 .zbg .ret-preview {
   padding: 18px;
-  border-radius: 16px;
+  border-radius: var(--radius);
   background: var(--surface-2);
   border: 1px solid var(--border);
 }
@@ -2677,12 +2652,9 @@ body.zbg-noscroll .zbg .zbg-toasts {
 .zbg .ret-big b {
   display: block;
   font-size: 26px;
-  font-weight: 760;
+  font-weight: 700;
   letter-spacing: -0.02em;
-  background: var(--grad);
-  -webkit-background-clip: text;
-  background-clip: text;
-  color: transparent;
+  color: var(--text);
 }
 .zbg .ret-big span {
   font-size: 12px;
@@ -2729,7 +2701,7 @@ body.zbg-noscroll .zbg .zbg-toasts {
   gap: 10px;
   align-items: center;
   padding: 8px 10px;
-  border-radius: 10px;
+  border-radius: var(--radius-sm);
   border: 1px solid var(--border);
   background: var(--surface);
   cursor: pointer;
@@ -2764,7 +2736,7 @@ body.zbg-noscroll .zbg .zbg-toasts {
 .zbg .ed-adv {
   margin-top: 18px;
   border: 1px solid var(--border);
-  border-radius: 12px;
+  border-radius: var(--radius-sm);
   padding: 0 14px;
 }
 .zbg .ed-adv summary {
@@ -2773,7 +2745,7 @@ body.zbg-noscroll .zbg .zbg-toasts {
   align-items: center;
   cursor: pointer;
   padding: 12px 0;
-  font-weight: 650;
+  font-weight: 600;
   list-style: none;
 }
 .zbg .ed-adv summary::-webkit-details-marker {
@@ -2793,15 +2765,15 @@ body.zbg-noscroll .zbg .zbg-toasts {
   align-items: center;
 }
 .zbg .age-row output {
-  font-weight: 750;
+  font-weight: 700;
   font-size: 16px;
   text-align: right;
 }
 .zbg .sum-hero {
   padding: 22px;
-  border-radius: 18px;
+  border-radius: var(--radius);
   margin: 16px 0;
-  background: linear-gradient(135deg, color-mix(in srgb, var(--accent) 12%, var(--surface)), color-mix(in srgb, var(--accent-2) 10%, var(--surface)));
+  background: color-mix(in srgb, var(--accent) 6%, var(--surface));
   border: 1px solid color-mix(in srgb, var(--accent) 25%, var(--border));
 }
 .zbg .sum-route {
@@ -2817,7 +2789,7 @@ body.zbg-noscroll .zbg .zbg-toasts {
   align-items: center;
   text-align: center;
   padding: 14px;
-  border-radius: 14px;
+  border-radius: var(--radius);
   background: var(--surface);
   border: 1px solid var(--border);
   box-shadow: var(--shadow);
@@ -2839,7 +2811,7 @@ body.zbg-noscroll .zbg .zbg-toasts {
   position: relative;
   text-align: center;
   font-size: 12px;
-  font-weight: 650;
+  font-weight: 600;
   color: var(--accent);
 }
 .zbg .sum-route .flow i {
@@ -2847,9 +2819,8 @@ body.zbg-noscroll .zbg .zbg-toasts {
   height: 3px;
   margin-top: 8px;
   border-radius: 3px;
-  background: repeating-linear-gradient(90deg, var(--accent) 0 8px, transparent 8px 14px);
+  background: var(--accent);
   background-size: 28px 3px;
-  animation: zbg-stripes 0.9s linear infinite;
 }
 .zbg .sum-grid {
   display: grid;
@@ -2861,7 +2832,7 @@ body.zbg-noscroll .zbg .zbg-toasts {
   gap: 12px;
   align-items: center;
   padding: 12px 14px;
-  border-radius: 12px;
+  border-radius: var(--radius-sm);
   border: 1px solid var(--border);
   cursor: pointer;
   transition: border-color 0.15s;
@@ -2924,7 +2895,7 @@ body.zbg-noscroll .zbg .zbg-toasts {
 /* ---------- Migration ---------- */
 .zbg .mig-script {
   border: 1px solid var(--border);
-  border-radius: 14px;
+  border-radius: var(--radius);
   margin-bottom: 12px;
   overflow: hidden;
 }
@@ -3019,7 +2990,7 @@ body.zbg-noscroll .zbg .zbg-toasts {
 .zbg .rs-day > small {
   display: block;
   font-size: 11px;
-  font-weight: 650;
+  font-weight: 600;
   color: var(--muted);
   margin-bottom: 5px;
   white-space: nowrap;
@@ -3033,7 +3004,7 @@ body.zbg-noscroll .zbg .zbg-toasts {
   flex-direction: column;
   align-items: center;
   padding: 6px 11px;
-  border-radius: 10px;
+  border-radius: var(--radius-sm);
   border: 1.5px solid var(--border);
   background: var(--surface-2);
   cursor: pointer;
@@ -3069,7 +3040,7 @@ body.zbg-noscroll .zbg .zbg-toasts {
 }
 .zbg .rs-snap:hover {
   border-color: var(--border-2);
-  transform: translateY(-1px);
+  transform: none;
 }
 .zbg .rs-snap.on {
   border-color: var(--accent);
@@ -3123,7 +3094,7 @@ body.zbg-noscroll .zbg .zbg-toasts {
 }
 .zbg .crumbs button:last-child {
   color: var(--text);
-  font-weight: 650;
+  font-weight: 600;
 }
 .zbg .crumbs > .zi {
   color: var(--muted);
@@ -3200,7 +3171,7 @@ body.zbg-noscroll .zbg .zbg-toasts {
   align-items: center;
   gap: 6px;
   padding: 3px 3px 3px 10px;
-  border-radius: 8px;
+  border-radius: var(--radius);
   background: var(--surface-2);
   font-size: 12px;
 }
@@ -3229,7 +3200,7 @@ body.zbg-noscroll .zbg .zbg-toasts {
   align-items: flex-start;
   padding: 12px;
   border: 1.5px solid var(--border);
-  border-radius: 12px;
+  border-radius: var(--radius-sm);
   cursor: pointer;
 }
 .zbg .rs-opt:has(input:checked) {
@@ -3409,9 +3380,9 @@ body.zbg-noscroll .zbg .zbg-toasts {
   display: inline-flex;
   align-items: center;
   padding: 0 6px;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   font-size: 10.5px;
-  font-weight: 650;
+  font-weight: 600;
   line-height: 17px;
   white-space: nowrap;
   color: var(--tone);
@@ -3448,7 +3419,7 @@ body.zbg-noscroll .zbg .zbg-toasts {
   gap: 10px;
   align-items: center;
   padding: 6px 8px;
-  border-radius: 8px;
+  border-radius: var(--radius);
   font-size: 12.5px;
 }
 .zbg .plan-row:nth-child(odd) {
@@ -3458,7 +3429,7 @@ body.zbg-noscroll .zbg .zbg-toasts {
   display: inline-flex;
   gap: 5px;
   align-items: center;
-  font-weight: 650;
+  font-weight: 600;
   color: var(--tone);
   font-size: 12px;
 }
@@ -3559,3 +3530,52 @@ body.zbg-noscroll .zbg .zbg-toasts {
 .zbg .mig-script > p {
   margin: 12px;
 }
+
+/* ---------- Finish: shadcn-Look in Unraid-Farben (überschreibt Vorheriges) ---------- */
+.zbg { font-variant-numeric: tabular-nums; }
+.zbg h1, .zbg h2, .zbg h3, .zbg h4 { font-weight: 600; letter-spacing: -0.015em; }
+.zbg a { color: var(--link); }
+.zbg .zbg-logo { width: 34px; height: 34px; border-radius: var(--radius-sm); }
+.zbg .zbg-logo .zi { width: 19px; height: 19px; }
+.zbg .zbg-btn.primary, .zbg .zbg-btn.primary:hover:not(:disabled) { color: var(--on-accent); background: var(--accent); border-color: transparent; }
+.zbg .zbg-btn.primary:hover:not(:disabled) { filter: brightness(1.08); }
+.zbg .zbg-btn:active:not(:disabled) { transform: none; }
+.zbg .job-ic { width: 36px; height: 36px; border-radius: var(--radius-sm); animation: none; }
+.zbg .zbg-job, .zbg .zbg-hero, .zbg .zbg-panel, .zbg .zbg-card, .zbg .zbg-side { box-shadow: var(--shadow); border-radius: var(--radius); }
+.zbg .zbg-job { padding: 18px; }
+.zbg .zbg-job::before { height: 3px; inset: 0 0 auto 0; opacity: 1; }
+.zbg .zbg-job.running::before { animation: zbg-shimmer 1.6s linear infinite; background: linear-gradient(90deg, var(--run), color-mix(in srgb, var(--run) 30%, transparent), var(--run)); background-size: 200% 100%; }
+@media (prefers-reduced-motion: reduce) { .zbg *, .zbg *::before { animation: none !important; transition: none !important; } }
+.zbg .zbg-hero { padding: 24px; overflow: visible; }
+.zbg .zbg-hero::before { content: ''; position: absolute; inset: 0 0 auto 0; height: 3px; border-radius: var(--radius) var(--radius) 0 0; background: var(--tone, var(--brand)); }
+.zbg .zbg-panel { padding: 18px; }
+.zbg .zbg-pill, .zbg .zbg-badge { border-radius: 999px; text-transform: none; letter-spacing: normal; padding: 2px 9px; font-weight: 500; font-size: 12px; }
+.zbg .zbg-badge { border: 1px solid color-mix(in srgb, var(--tone) 22%, transparent); }
+.zbg .zbg-meter, .zbg .zbg-progress, .zbg .usebar { height: 6px; border-radius: 999px; background: var(--surface-3); }
+.zbg .zbg-progress > div, .zbg .zbg-meter div { background: var(--accent); border-radius: 999px; }
+.zbg .zbg-progress.tone-ok > div { background: var(--ok); }
+.zbg .zbg-meter div { background: var(--tone); }
+.zbg .tl-track { border-radius: 6px; }
+.zbg-top { padding: 10px 20px; gap: 16px; background: color-mix(in srgb, var(--surface) 85%, transparent); backdrop-filter: saturate(1.4) blur(8px); }
+.zbg-tabs { background: var(--surface-3); padding: 4px; border-radius: var(--radius-sm); gap: 2px; }
+.zbg .zbg-tab { border-radius: 6px; padding: 6px 12px; font-weight: 500; font-size: 13px; }
+.zbg .zbg-table-wrap { border-radius: var(--radius); max-height: 70vh; box-shadow: var(--shadow); }
+.zbg .zbg-table th { position: sticky; top: 0; z-index: 1; background: var(--surface); border-bottom: 1px solid var(--border); }
+.zbg .zbg-table td { padding: 9px 12px; }
+.zbg .zbg-table tbody tr:hover td { background: var(--surface-2); }
+.zbg .zbg-select, .zbg .zbg-input, .zbg input[type='text'], .zbg input[type='search'], .zbg input[type='number'] { border-radius: var(--radius-sm); border-color: var(--border); box-shadow: var(--shadow); }
+.zbg ::selection { background: var(--accent-soft); }
+@media (max-width: 1000px) {
+  .zbg .zbg-table:not(.files):not(.hist) > thead th:nth-child(2),
+  .zbg .zbg-table:not(.files):not(.hist) > tbody td:nth-child(2) { display: none; }
+}
+
+/* Kopfzeile: Aktionen rechts, Tabs scrollen statt umzubrechen */
+.zbg .top-act { margin-left: auto; }
+.zbg-top { flex-wrap: nowrap; }
+.zbg .brand small { display: none; }
+.zbg-tabs { overflow-x: auto; scrollbar-width: none; min-width: 0; }
+@media (min-width: 1100px) { .zbg .brand small { display: block; } }
+.zbg .brand b, .zbg .top-act .zbg-pill { white-space: nowrap; }
+.zbg .zbg-tab { flex: none; }
+@media (max-width: 900px) { .zbg .zbg-tab:not(.active) span { display: none; } }
