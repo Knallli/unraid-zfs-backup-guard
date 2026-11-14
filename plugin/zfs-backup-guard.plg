@@ -2,8 +2,8 @@
 <!DOCTYPE PLUGIN [
 <!ENTITY name "zfs-backup-guard">
 <!ENTITY author "Knallli">
-<!ENTITY version "2026.10.16e">
-<!ENTITY md5 "10e7e38cbfe00999996a9bdcca4d4fbf">
+<!ENTITY version "2026.11.14">
+<!ENTITY md5 "5773cc63691bfc5723beeeeeac856b7f">
 <!ENTITY launch "Settings/ZFSBackupGuard">
 <!ENTITY gitURL "https://github.com/Knallli/unraid-zfs-backup-guard">
 <!ENTITY pluginURL "https://raw.githubusercontent.com/Knallli/unraid-zfs-backup-guard/main/plugin/&name;.plg">
@@ -15,6 +15,10 @@
 <PLUGIN name="&name;" author="&author;" version="&version;" launch="&launch;" pluginURL="&pluginURL;" support="&gitURL;/issues" icon="shield" min="6.12.0">
 
 <CHANGES>
+###2026.11.14
+- Audit-Korrekturen: Array-Stopp-Event, sichere Retention und Sends, Ziel-Konflikte, robuste Läufe
+- Restore-Symlinkprüfung, Snapshot-Bereinigung nach rsync, Testaufräumen
+
 ###2026.10.16e
 - Zerobyte-Erkennung entfernt: das Plugin liest keine Datenbanken anderer Apps mehr
 
