@@ -287,6 +287,19 @@ throws('Job: SSH-Host mit Shell-Zeichen', static fn() => Job::normalize(['target
 eq('Job: Boot als Quelle erlaubt', Job::normalize(['name' => 'Boot', 'source' => ['dataset' => 'flash/boot'], 'target' => ['path' => '/mnt/user/backup/zfs/boot']])['source']['dataset'], 'flash/boot');
 eq('Job: Retention gekappt', Job::normalize(['snapshots' => ['keep' => ['daily' => 99999]]] + $base)['snapshots']['keep']['daily'], 1000);
 
+foreach (['::1', '::ffff:192.0.2.1', '2001:db8::1', '127.0.0.1', 'backup.example', 'nas-01'] as $host) {
+    check('SSH: gültiger Host ' . $host, ZBG\Remote::validHost($host));
+}
+foreach ([':::', '2001:db8::xyz', '[::1]', '-oProxyCommand=x', 'host:22', "na\ns", 'a;id', ''] as $host) {
+    check('SSH: ungültiger Host ' . json_encode($host), !ZBG\Remote::validHost($host));
+    if ($host !== '') {
+        throws('SSH: ungültiger Host wird beim Speichern abgewiesen ' . json_encode($host),
+            static fn() => Job::normalize(['target' => ['path' => '/mnt/user/b/x', 'ssh' => ['host' => $host]]] + $base));
+    }
+    throws('SSH: ungültiger Host wird beim Transport abgewiesen ' . json_encode($host),
+        static fn() => ZBG\Remote::ssh(['host' => $host]));
+}
+
 /* ------------------------------------------------------------------ */
 /* Migration                                                           */
 /* ------------------------------------------------------------------ */
@@ -379,6 +392,78 @@ $realSuccess = ['result' => 'success', 'start' => time() - 60, 'end' => time() -
 $dryFailure = ['result' => 'failed', 'dryRun' => true, 'start' => time(), 'end' => time()];
 eq('Status: Probelauf ersetzt keine echte Backup-Ampel', History::status($statusJob, [$dryFailure, $realSuccess])['state'], 'ok');
 eq('Status: nur Probeläufe zählen nicht als Backup', History::status($statusJob, [$dryFailure])['state'], 'never');
+
+/* ------------------------------------------------------------------ */
+/* Rsync: künstliche Dataset-Zielpfade dürfen keine Quelldaten verdecken */
+/* ------------------------------------------------------------------ */
+
+$collisionDir = sys_get_temp_dir() . '/zbg-rsync-collisions-' . getmypid() . '-' . bin2hex(random_bytes(4));
+$collisionRoot = $collisionDir . '/root';
+$collisionChild = $collisionDir . '/external';
+mkdir($collisionRoot . '/.datasets', 0700, true);
+mkdir($collisionChild, 0700, true);
+$collisionFixture = static function (array $paths) use ($row): void {
+    Zfs::setFixture([
+        'pools' => [['name' => 'fixture', 'size' => '1', 'alloc' => '0', 'free' => '1', 'health' => 'ONLINE', 'capacity' => '0', 'frag' => '0']],
+        'datasets' => array_map(static fn(string $name, string $path): array => $row($name, $path), array_keys($paths), array_values($paths)),
+        'mounts' => implode("\n", array_map(static fn(string $name, string $path): string => $name . ' ' . str_replace(' ', '\\040', $path) . ' zfs rw 0 0', array_keys($paths), array_values($paths))),
+    ]);
+};
+$collisionFixture(['fixture/root' => $collisionRoot, 'fixture/root/child' => $collisionChild]);
+$collisionPlan = Zfs::plan('fixture/root', true, []);
+$collisionJob = ['id' => 'collision', 'target' => ['path' => '/mnt/user/zbg-collision-test', 'mode' => 'mirror']];
+
+try {
+    mkdir($collisionRoot . '/.datasets/child');
+    file_put_contents($collisionRoot . '/.datasets/child/original.txt', 'original');
+    throws('Rsync: Originalverzeichnis wird vor Zielabfrage abgewiesen', static fn() => ZBG\Rsync::preflight($collisionJob, $collisionPlan));
+    eq('Rsync: abgewiesene Zuordnung erhält Originaldatei', file_get_contents($collisionRoot . '/.datasets/child/original.txt'), 'original');
+    removeFixtureTree($collisionRoot . '/.datasets/child');
+    mkdir($collisionRoot . '/.datasets/child');
+    throws('Rsync: auch leeres Originalverzeichnis kollidiert', static fn() => ZBG\Rsync::preflight($collisionJob, $collisionPlan));
+    rmdir($collisionRoot . '/.datasets/child');
+    file_put_contents($collisionRoot . '/.datasets/child', 'file');
+    throws('Rsync: reguläre Datei am Zielpfad kollidiert', static fn() => ZBG\Rsync::preflight($collisionJob, $collisionPlan));
+    unlink($collisionRoot . '/.datasets/child');
+    symlink($collisionChild, $collisionRoot . '/.datasets/child');
+    throws('Rsync: Symlink am Zielpfad kollidiert', static fn() => ZBG\Rsync::preflight($collisionJob, $collisionPlan));
+    unlink($collisionRoot . '/.datasets/child');
+    symlink($collisionDir . '/missing', $collisionRoot . '/.datasets/child');
+    throws('Rsync: dangling Symlink am Zielpfad kollidiert', static fn() => ZBG\Rsync::preflight($collisionJob, $collisionPlan));
+    unlink($collisionRoot . '/.datasets/child');
+
+    rmdir($collisionRoot . '/.datasets');
+    file_put_contents($collisionRoot . '/.datasets', 'ancestor file');
+    throws('Rsync: reguläre Datei im künstlichen Zielvorfahren kollidiert', static fn() => ZBG\Rsync::preflight($collisionJob, $collisionPlan));
+    unlink($collisionRoot . '/.datasets');
+    symlink($collisionDir . '/missing', $collisionRoot . '/.datasets');
+    throws('Rsync: dangling Symlink im Zielvorfahren kollidiert', static fn() => ZBG\Rsync::preflight($collisionJob, $collisionPlan));
+    unlink($collisionRoot . '/.datasets');
+    mkdir($collisionRoot . '/.datasets');
+
+    $duplicatePlan = $collisionPlan;
+    $duplicatePlan['items'][1]['targetRel'] = '';
+    throws('Rsync: unterschiedliche Datasets mit gleichem Ziel abgewiesen', static fn() => ZBG\Rsync::preflight($collisionJob, $duplicatePlan));
+
+    $grandchild = $collisionDir . '/grandchild';
+    mkdir($grandchild);
+    $collisionFixture(['fixture/root' => $collisionRoot, 'fixture/root/child' => $collisionChild, 'fixture/root/child/grandchild' => $grandchild]);
+    $nestedPlan = Zfs::plan('fixture/root', true, []);
+    file_put_contents($collisionChild . '/grandchild', 'child original');
+    throws('Rsync: künstlicher Unterpfad kollidiert mit externem Eltern-Dataset', static fn() => ZBG\Rsync::preflight($collisionJob, $nestedPlan));
+    unlink($collisionChild . '/grandchild');
+
+    $collisionFixture(['fixture/root' => $collisionRoot, 'fixture/root/child' => $collisionChild]);
+    mkdir($collisionRoot . '/.zfs/snapshot/race/.datasets/child', 0700, true);
+    file_put_contents($collisionRoot . '/.zfs/snapshot/race/.datasets/child/original.txt', 'snapshot original');
+    mkdir($collisionChild . '/.zfs/snapshot/race', 0700, true);
+    throws('Rsync: neue Snapshot-Kollision vor jedem Transfer abgewiesen', static function () use ($collisionJob, $collisionPlan): void {
+        ZBG\Rsync::transfer($collisionJob, $collisionPlan, 'race', static function (string $line): void {});
+    });
+    eq('Rsync: Snapshot-Original bleibt erhalten', file_get_contents($collisionRoot . '/.zfs/snapshot/race/.datasets/child/original.txt'), 'snapshot original');
+} finally {
+    removeFixtureTree($collisionDir);
+}
 
 function removeFixtureTree(string $path): void
 {

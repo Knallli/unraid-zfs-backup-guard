@@ -74,7 +74,7 @@
     system: false,
     method: 'rsync',
     schedule: '0 2 * * *',
-    snapshots: { keep: { hourly: 0, daily: 7, weekly: 4, monthly: 3, yearly: 0 } },
+    snapshots: { removeAfterRsync: false, keep: { hourly: 0, daily: 7, weekly: 4, monthly: 3, yearly: 0 } },
     versions: { keep: { daily: 14, weekly: 8, monthly: 6 } },
     consistency: { mode: 'crash', containers: [] },
     hooks: { pre: null, post: null },
@@ -89,7 +89,7 @@
     { ...clone(base), id: 'main', name: 'Main → Array', source: { dataset: 'cache/main', recursive: true, exclude: [] }, target: T('main'), schedule: '15 2 * * *' },
     { ...clone(base), id: 'domains', name: 'VMs (domains)', source: { dataset: 'cache/domains', recursive: true, exclude: [] }, target: T('domains'), schedule: '0 3 * * 0' },
     { ...clone(base), id: 'lxc', name: 'LXC → Array', source: { dataset: 'cache/lxc', recursive: true, exclude: [] }, target: T('lxc'), schedule: '30 4 * * *', notify: 'all' },
-    { ...clone(base), id: 'boot', name: 'Unraid-Boot (/boot)', enabled: false, system: true, source: { dataset: 'flash/boot', recursive: false, exclude: [] }, target: { path: '/mnt/user/backup/zfs/boot', mode: 'versioned', dataset: '', ssh: null }, schedule: '45 1 * * *', snapshots: { keep: { hourly: 0, daily: 14, weekly: 8, monthly: 12, yearly: 2 } } },
+    { ...clone(base), id: 'boot', name: 'Unraid-Boot (/boot)', enabled: false, system: true, source: { dataset: 'flash/boot', recursive: false, exclude: [] }, target: { path: '/mnt/user/backup/zfs/boot', mode: 'versioned', dataset: '', ssh: null }, schedule: '45 1 * * *', snapshots: { removeAfterRsync: false, keep: { hourly: 0, daily: 14, weekly: 8, monthly: 12, yearly: 2 } } },
   ];
 
   // Verlauf generieren
@@ -293,6 +293,7 @@
       }
       case 'jobs.save': {
         const j = p.job;
+        j.snapshots.removeAfterRsync = j.method === 'rsync' && j.snapshots.removeAfterRsync === true;
         if (runs[p.originalId || j.id]?.state === 'running') err('Laufenden Job nicht ändern');
         if (!j.name) err('Name fehlt');
         j.id = j.id || j.name.toLowerCase().replace(/[^a-z0-9]+/g, '-');

@@ -86,11 +86,12 @@ final class Restore
         }
         $targets = [];
         $count = 0;
+        $selection = array_values($minimal);
         foreach ($minimal as $rel => $source) {
             $rel = (string)$rel;
             $suffix = $base === '' ? $rel : substr($rel, strlen($base) + 1);
             $destination = $target . ($suffix === '' ? '' : '/' . $suffix);
-            self::inspect($root, $source, $destination, $target, $count, $version);
+            self::inspect($root, $source, $destination, $target, $selection, $count, $version);
             $targets[] = $destination;
         }
         // All sources, links and target ancestors are checked before creating anything.
@@ -201,7 +202,7 @@ final class Restore
         // --safe-links is defence in depth, never permission to silently omit unsafe links.
         $copied = 0;
         foreach ($targets as $destination) {
-            self::inspect($target, $destination, $destination, $target, $copied, true);
+            self::inspect($target, $destination, $destination, $target, $targets, $copied, true);
         }
         if ($copied !== $count) {
             throw new UserError('Remote-Wiederherstellung unvollständig (fehlende oder übersprungene Einträge); '
@@ -215,12 +216,47 @@ final class Restore
         $inspect = <<<'SH'
 set -eu
 root=$1; base=$2; shift 2
+selected() {
+ candidate=$1
+ case "$candidate" in "$root"/.zfs|"$root"/.zfs/*|"$root"/.zbg-version.json|"$root"/.zbg-version.json/*)
+  echo "Remote-Symlink verweist auf ausgeschlossene Metadaten" >&2; exit 1;;
+ esac
+ for selection in __ZBG_SELECTED__; do
+  case "$candidate" in "$selection"|"$selection"/*) return 0;; esac
+ done
+ echo "Remote-Symlink verlässt die ausgewählten Pfade" >&2; exit 1
+}
 for p do
  if [ -L "$p" ]; then
   link=$(readlink -- "$p" && printf .); link=${link%.}; link=${link%?}
   case "$link" in ''|/*) echo "Absoluter oder leerer Remote-Symlink" >&2; exit 1;; esac
-  resolved=$(realpath -m -- "${p%/*}/$link" && printf .)
-  resolved=${resolved%.}; resolved=${resolved%?}
+  pending=${p%/*}/$link; resolved=; links=0
+  while [ -n "$pending" ]; do
+   case "$pending" in
+    */*) part=${pending%%/*}; pending=${pending#*/};;
+    *) part=$pending; pending=;;
+   esac
+   case "$part" in
+    ''|.) continue;;
+    ..) resolved=${resolved%/*}; continue;;
+   esac
+   probe=$resolved/$part
+   if [ -L "$probe" ]; then
+    selected "$probe"
+    links=$((links + 1))
+    [ "$links" -le 40 ] || { echo "Zyklischer Remote-Symlink" >&2; exit 1; }
+    link=$(readlink -- "$probe" && printf .); link=${link%.}; link=${link%?}
+    case "$link" in ''|/*) echo "Absoluter oder leerer Remote-Symlink" >&2; exit 1;; esac
+    if [ -n "$pending" ]; then pending=$link/$pending; else pending=$link; fi
+   else
+    if [ -e "$probe" ] && [ -n "$pending" ] && [ ! -d "$probe" ]; then
+     echo "Remote-Pfad enthält eine Datei statt eines Verzeichnisses" >&2; exit 1
+    fi
+    resolved=$probe
+   fi
+  done
+  resolved=${resolved:-/}
+  selected "$resolved"
   case "$resolved" in "$root"|"$root"/*) ;; *) echo "Remote-Symlink verlässt Version" >&2; exit 1;; esac
   case "$resolved" in "$base"|"$base"/*) ;; *) echo "Remote-Symlink verlässt Wiederherstellungswurzel" >&2; exit 1;; esac
  elif [ ! -d "$p" ] && [ ! -f "$p" ]; then
@@ -229,6 +265,8 @@ for p do
  printf 'ZBG-ENTRY\n'
 done
 SH;
+        $selection = array_map(static fn(string $rel): string => $root . ($rel === '' ? '' : '/' . $rel), $selected);
+        $inspect = str_replace('__ZBG_SELECTED__', Remote::quote($selection), $inspect);
         $script = <<<'SH'
 set -eu
 root=$1; base=$2; inspect=$3; control=$4; manifest=$5; shift 5
@@ -395,7 +433,7 @@ SH;
     }
 
     /** Resolve links component-by-component, including dangling internal link targets. */
-    private static function canonicalPath(string $path): string
+    private static function canonicalPath(string $path, ?string $root = null, array $selected = [], bool $version = false): string
     {
         if ($path === '' || $path[0] !== '/' || str_contains($path, "\0")) {
             throw new UserError('Ungültiger absoluter Pfad');
@@ -414,10 +452,16 @@ SH;
             }
             $probe = '/' . implode('/', array_merge($resolved, [$part]));
             if (is_link($probe)) {
+                if ($root !== null) {
+                    self::assertSelected($probe, $root, $selected, $version);
+                }
                 if (++$links > 40 || ($link = @readlink($probe)) === false || $link === '') {
                     throw new UserError('Ungültiger oder zyklischer Symlink');
                 }
                 if ($link[0] === '/') {
+                    if ($root !== null) {
+                        throw new UserError('Absoluter Symlink kann nicht wiederhergestellt werden');
+                    }
                     $resolved = [];
                 }
                 $pending = array_merge(explode('/', $link), $pending);
@@ -428,7 +472,26 @@ SH;
                 $resolved[] = $part;
             }
         }
-        return '/' . implode('/', $resolved);
+        $canonical = '/' . implode('/', $resolved);
+        if ($root !== null) {
+            self::assertSelected($canonical, $root, $selected, $version);
+        }
+        return $canonical;
+    }
+
+    /** A selected directory covers its subtree; excluded root metadata never belongs to it. */
+    private static function assertSelected(string $path, string $root, array $selected, bool $version): void
+    {
+        if (Paths::within($root . '/.zfs', $path)
+            || ($version && Paths::within($root . '/.zbg-version.json', $path))) {
+            throw new UserError('Symlink verweist auf ausgeschlossene Steuer- oder Versionsmetadaten');
+        }
+        foreach ($selected as $selection) {
+            if (Paths::within($selection, $path)) {
+                return;
+            }
+        }
+        throw new UserError('Symlink verlässt die ausgewählten Wiederherstellungspfade: ' . $path);
     }
 
     private static function newTarget(string $path): string
@@ -470,7 +533,7 @@ SH;
     }
 
     private static function inspect(string $root, string $source, string $destination, string $target,
-        int &$count, bool $version): void
+        array $selected, int &$count, bool $version): void
     {
         $st = @lstat($source);
         if ($st === false) {
@@ -483,7 +546,8 @@ SH;
             if ($link === false || $link === '') {
                 throw new UserError('Symlink kann nicht gelesen werden: ' . $source);
             }
-            $sourceLink = self::canonicalPath($link[0] === '/' ? $link : dirname($source) . '/' . $link);
+            $sourceLink = self::canonicalPath($link[0] === '/' ? $link : dirname($source) . '/' . $link,
+                $root, $selected, $version);
             $targetLink = self::canonicalPath($link[0] === '/' ? $link : dirname($destination) . '/' . $link);
             if (!Paths::within($root, $sourceLink) || !Paths::within($target, $targetLink)) {
                 throw new UserError('Symlink verlässt die Sicherung oder das neue Wiederherstellungsverzeichnis: ' . $source);
@@ -508,7 +572,7 @@ SH;
                 if ($source === $root && $name === '.zfs') {
                     continue;
                 }
-                self::inspect($root, $source . '/' . $name, $destination . '/' . $name, $target, $count, $version);
+                self::inspect($root, $source . '/' . $name, $destination . '/' . $name, $target, $selected, $count, $version);
             }
         } finally {
             closedir($dir);

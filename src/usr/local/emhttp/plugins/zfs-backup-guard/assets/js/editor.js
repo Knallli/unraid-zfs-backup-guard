@@ -24,7 +24,7 @@
     method: 'rsync',
     target: { path: '', mode: 'versioned', dataset: '', ssh: null, adoptExisting: false },
     schedule: '0 2 * * *',
-    snapshots: { keep: { hourly: 0, daily: 7, weekly: 4, monthly: 3, yearly: 0 } },
+    snapshots: { removeAfterRsync: false, keep: { hourly: 0, daily: 7, weekly: 4, monthly: 3, yearly: 0 } },
     versions: { keep: { daily: 14, weekly: 8, monthly: 6 } },
     consistency: { mode: 'crash', containers: [] },
     hooks: { pre: null, post: null },
@@ -325,6 +325,7 @@
   Z.onBind = function (el, ev) {
     _onBind(el, ev);
     if (ed && el.dataset.bind === 'source.recursive') renderStep();
+    if (ed && el.dataset.bind === 'snapshots.removeAfterRsync') renderStepKeepFocus();
     if (ed && el.dataset.bind === 'name') ed.autoName = false;
     if (ed && el.dataset.bind === 'target.path') ed.autoTarget = false;
   };
@@ -380,6 +381,7 @@
       ed.job.target.adoptExisting = false;
       ed.job.verify = false;
       ed.job.system = false;
+      ed.job.snapshots.removeAfterRsync = false;
     }
     renderStep();
   };
@@ -483,12 +485,14 @@
     const k = j.snapshots.keep;
     const v = j.versions.keep;
     const versioned = j.method === 'rsync' && j.target.mode === 'versioned';
+    const cleanup = j.method === 'rsync' && j.snapshots.removeAfterRsync;
     return `<h2 class="ed-h">${icon('layers')}Wie lange wird aufbewahrt?</h2>
-      <p class="ed-lead">Gestaffelte Aufbewahrung: Pro Stunde, Tag, Woche, Monat und Jahr bleibt jeweils der neueste Snapshot erhalten. Aufgeräumt wird nur nach einem erfolgreichen Lauf, und der neueste Snapshot bleibt immer.</p>
+      <p class="ed-lead">${cleanup ? 'Nach erfolgreichem rsync werden alle eigenen Snapshots tatsächlich kopierter Datasets entfernt, auch der neueste; explizit geschützte Snapshots bleiben erhalten. Snapshot-only-Datasets behalten die normale Staffelung und ihren neuesten Snapshot. Bei Fehler oder Abbruch vor dem Cleanup wird nichts gelöscht.' : 'Gestaffelte Aufbewahrung: Pro Stunde, Tag, Woche, Monat und Jahr bleibt jeweils der neueste Snapshot erhalten. Aufgeräumt wird nur nach einem erfolgreichen Lauf, und der neueste Snapshot bleibt immer.'}</p>
+      ${j.method === 'rsync' ? `<div class="ed-sub row between"><div><b>Quell-Snapshots nach erfolgreichem rsync vollständig entfernen</b><br><small class="muted">Ersetzt die Snapshot-Aufbewahrung nur für tatsächlich kopierte Datasets. Die Regler gelten weiterhin für Snapshot-only-Datasets. Zielversionen werden unabhängig aufbewahrt.</small></div>${ui.toggle('snapshots.removeAfterRsync', cleanup, 'Quell-Snapshots entfernen')}</div>` : ''}
       <div class="ret-presets">${RET_PRESETS.map(([l, p]) => `<button type="button" class="chip${JSON.stringify(p) === JSON.stringify(k) ? ' on' : ''}" data-act="edRetPreset" data-value="${esc(JSON.stringify(p))}">${l}</button>`).join('')}</div>
       <div class="ret-wrap">
         <div class="ret-sliders">
-          <h4 class="ed-h4">${icon('camera')}Lokale Snapshots <small>auf ${esc((j.source.dataset || 'cache').split('/')[0])}</small></h4>
+          <h4 class="ed-h4">${icon('camera')}${cleanup ? 'Snapshot-only-Aufbewahrung' : 'Lokale Snapshots'} <small>auf ${esc((j.source.dataset || 'cache').split('/')[0])}</small></h4>
           ${Z.retention.LEVELS.map((l) => slider(`snapshots.keep.${l}`, Z.retention.LABEL[l], k[l], SNAP_MAX[l], l)).join('')}
         </div>
         <div class="ret-preview" data-region="edRet">${retPreview()}</div>
@@ -496,11 +500,12 @@
       ${
         versioned
           ? `<div class="ed-sub"><h4 class="ed-h4">${icon('history')}Versionen am Ziel <small>${esc(j.target.path)}</small></h4>
+          <p class="muted">Die Aufbewahrung der Zielversionen ist unabhängig vom Entfernen der Quell-Snapshots.</p>
           <div class="ret-sliders inline">${['daily', 'weekly', 'monthly'].map((l) => slider(`versions.keep.${l}`, Z.retention.LABEL[l], v[l], SNAP_MAX[l], l, 'edVer')).join('')}</div>
           <div data-region="edVer">${verPreview()}</div></div>`
           : j.method === 'zfs'
           ? `<div class="zbg-callout tone-info">${icon('info')}<div>Auf dem Ziel gilt dieselbe Staffelung. Der letzte gemeinsame Snapshot bleibt immer erhalten, damit inkrementelle Übertragungen möglich bleiben.</div></div>`
-          : `<div class="zbg-callout tone-warn">${icon('alert')}<div>Im Spiegel-Modus gibt es am Ziel nur eine Version. Ältere Stände existieren dann ausschließlich als lokale Snapshots auf dem Pool.</div></div>`
+          : `<div class="zbg-callout tone-warn">${icon('alert')}<div>${cleanup ? 'Im Spiegel-Modus gibt es am Ziel nur den aktuellen Stand. Nach dem Entfernen der Quell-Snapshots gibt es für kopierte Datasets keinen älteren Stand im Spiegel oder in eigenen Quell-Snapshots. Eine Historie benötigt ein unabhängiges nachgelagertes Backup.' : 'Im Spiegel-Modus gibt es am Ziel nur eine Version. Ältere Stände bleiben in lokalen Quell-Snapshots oder einem unabhängigen nachgelagerten Backup erhalten.'}</div></div>`
       }`;
   };
   function slider(bind, label, val, max, lvl, refresh = 'edRet') {
@@ -515,6 +520,7 @@
   });
   function retPreview() {
     const j = ed.job;
+    if (j.method === 'rsync' && j.snapshots.removeAfterRsync) return `<div class="zbg-callout tone-info">${icon('info')}<div><b>Kopierte Quellen: vollständiges Cleanup.</b> Nach erfolgreichem rsync bleiben keine ungeschützten eigenen Quell-Snapshots. Für Snapshot-only-Datasets gelten die Regler links; der neueste Snapshot bleibt dort erhalten. Keine Mengen- oder Platzschätzung für kopierte Quellen.</div></div>`;
     if (!Z.cron.valid(j.schedule)) return '';
     const sim = Z.retention.simulate(j.schedule, j.snapshots.keep);
     const now = sim.now;
@@ -671,13 +677,15 @@
   /* ---------- 7. Zusammenfassung ---------- */
   RENDER.summary = () => {
     const j = ed.job;
+    const cleanup = j.method === 'rsync' && j.snapshots.removeAfterRsync;
     const warns = [];
     const errs = STEPS.map((_, i) => stepError(i)).filter(Boolean);
     if (j.method === 'rsync' && j.target.mode === 'mirror') warns.push('Spiegel-Modus: Gelöschte Dateien verschwinden auch aus dem Backup.');
+    if (cleanup && j.target.mode === 'mirror') warns.push('Quell-Snapshot-Cleanup im Spiegel-Modus: Für kopierte Datasets bleibt kein älterer Stand im Spiegel oder in eigenen Quell-Snapshots. Eine Historie muss ein unabhängiges nachgelagertes Backup halten.');
     if (ed.check && ed.check.checks) ed.check.checks.filter((c) => !c.ok).forEach((c) => warns.push(c.label));
-    if (!Object.values(j.snapshots.keep).some((v) => v > 0)) warns.push('Keine Snapshot-Aufbewahrung: Es bleibt nur der jeweils neueste Snapshot.');
+    if (!Object.values(j.snapshots.keep).some((v) => v > 0)) warns.push(cleanup ? 'Snapshot-only-Aufbewahrung ist aus: Nur für Snapshot-only-Datasets bleibt der neueste Snapshot erhalten; kopierte Quellen werden vollständig aufgeräumt.' : 'Keine Snapshot-Aufbewahrung: Es bleibt nur der jeweils neueste Snapshot.');
     if (j.notify === 'none' && !j.healthcheckUrl) warns.push('Keine Benachrichtigung: Fehler fallen nur im Verlauf auf.');
-    const sim = Z.cron.valid(j.schedule) ? Z.retention.simulate(j.schedule, j.snapshots.keep) : null;
+    const sim = !cleanup && Z.cron.valid(j.schedule) ? Z.retention.simulate(j.schedule, j.snapshots.keep) : null;
     const row = (ic, title, value, step) => `<div class="sum-row" data-act="edGo" data-i="${step}">${icon(ic)}<div><small>${title}</small><b>${value}</b></div>${icon('edit', 'sum-edit')}</div>`;
     return `<h2 class="ed-h">${icon('check')}Alles bereit?</h2>
       <div class="sum-hero">
@@ -693,7 +701,7 @@
         ${row('shield', 'Job', `${esc(j.name)} <span class="mono muted">${esc(j.id)}</span>`, 0)}
         ${row('calendar', 'Zeitplan', `${esc(Z.cron.describe(j.schedule))} <span class="mono muted">${esc(j.schedule)}</span>`, 2)}
         ${row('camera', 'Snapshots', `${esc(Z.keepSummary(j))}${sim ? ` <span class="muted">≈ ${sim.kept.length} Stück</span>` : ''}`, 3)}
-        ${j.method === 'rsync' && j.target.mode === 'versioned' ? row('history', 'Versionen', `${j.versions.keep.daily} T · ${j.versions.keep.weekly} W · ${j.versions.keep.monthly} M`, 3) : ''}
+        ${j.method === 'rsync' && j.target.mode === 'versioned' ? row('history', 'Versionen (unabhängig vom Quell-Cleanup)', `${j.versions.keep.daily} T · ${j.versions.keep.weekly} W · ${j.versions.keep.monthly} M`, 3) : ''}
         ${row('box', 'Konsistenz', j.consistency.mode === 'crash' ? 'Crash-konsistent' : `${j.consistency.mode === 'pause' ? 'Pausieren' : 'Stoppen'}: ${esc(j.consistency.containers.join(', ') || 'keine Container gewählt')}`, 4)}
         ${row('bell', 'Überwachung', `${{ all: 'Jeder Lauf', errors: 'Nur Fehler', none: 'Keine' }[j.notify]} · Warnung nach ${j.maxAgeHours} h${j.healthcheckUrl ? ' · Healthchecks' : ''}`, 5)}
         ${j.method === 'rsync' && j.system ? row('server', 'Systemdisk', 'Partitionen, EFI, LUKS-Header → <span class="mono">.zbg-system/</span>', 1) : ''}
@@ -707,9 +715,9 @@
         <li>${j.method === 'zfs' ? 'zfs send -I → receive -s -u' : j.target.mode === 'versioned' ? 'rsync --link-dest in neuen Versionsordner' : 'rsync --delete in den Spiegel'}</li>
         ${j.method === 'rsync' && j.system ? '<li>Systemdisk: Partitionen, EFI, LUKS-Header nach <code>.zbg-system/</code></li>' : ''}
         ${j.method === 'rsync' && j.verify ? '<li>Prüfsummen mit dem Quell-Snapshot vergleichen</li>' : ''}
-        <li>Aufräumen nach Aufbewahrungsregeln (nur eigene Snapshots, nur bei Erfolg)</li>
+        <li>${cleanup ? 'Nur bei Erfolg: alle eigenen Quell-Snapshots kopierter Datasets entfernen (außer explizit geschützten); Snapshot-only-Datasets nach Aufbewahrungsregeln aufräumen, neuester bleibt' : 'Aufräumen nach Aufbewahrungsregeln (nur eigene Snapshots, nur bei Erfolg)'}</li>
+        ${j.method === 'rsync' && j.target.mode === 'versioned' ? '<li>Zielversionen unabhängig nach ihrer Aufbewahrung aufräumen (nur bei Erfolg)</li>' : ''}
         <li>Verlauf, ${j.notify === 'none' ? '' : 'Benachrichtigung, '}${j.healthcheckUrl ? 'Healthcheck-Ping, ' : ''}fertig</li>
-        ${down ? `<li>Danach sichert ${esc(down.tool)} („${esc(down.name)}“, ${esc(Z.cron.describe(down.cron))}) das Ziel außer Haus</li>` : ''}
       </ol></div>
       <details class="ed-adv"><summary>${icon('terminal')}JSON</summary><pre class="zbg-pre">${esc(JSON.stringify(j, null, 2))}</pre></details>`;
   };

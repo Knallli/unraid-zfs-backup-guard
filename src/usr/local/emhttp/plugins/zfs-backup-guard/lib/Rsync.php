@@ -23,6 +23,7 @@ final class Rsync
     /** The nearest existing ancestor must be mounted, writable and canonical. */
     public static function preflight(array $job, array $plan, ?callable $cancel = null): array
     {
+        self::assertTargetMappings($plan);
         $base = self::base($job);
         $ssh = $job['target']['ssh'] ?? null;
         $owner = self::owner($job);
@@ -96,6 +97,43 @@ df -B1 --output=avail -- "$probe"
     private static function join(string $root, ?string $relative): string
     {
         return rtrim($root, '/') . ($relative === null || $relative === '' ? '' : '/' . $relative);
+    }
+
+    /** Artificial target subtrees must not hide ordinary data from another source. */
+    private static function assertTargetMappings(array $plan, ?string $snapshot = null): void
+    {
+        $items = array_values(array_filter($plan['items'], static fn(array $item): bool => $item['action'] === 'copy'));
+        foreach ($items as $parent) {
+            $prefix = (string)$parent['targetRel'];
+            foreach ($items as $child) {
+                if ($parent['name'] === $child['name']) {
+                    continue;
+                }
+                $target = (string)$child['targetRel'];
+                if ($target === $prefix) {
+                    throw new UserError("Dataset-Zielkollision: {$parent['name']} und {$child['name']} verwenden denselben Zielpfad ./$target");
+                }
+                if ($prefix !== '' && !str_starts_with($target, $prefix . '/')) {
+                    continue;
+                }
+                $relative = $prefix === '' ? $target : substr($target, strlen($prefix) + 1);
+                $mountPath = self::join($parent['path'], $relative);
+                if ($mountPath === rtrim($child['path'], '/') && in_array('/' . $relative . '/', $parent['protect'], true)) {
+                    // A physical child mount is deliberately excluded from the parent copy.
+                    continue;
+                }
+                $source = $snapshot === null ? $parent['path'] : Zfs::snapshotDir($parent['name'], $snapshot);
+                $path = rtrim($source, '/');
+                $parts = explode('/', $relative);
+                foreach ($parts as $index => $part) {
+                    $path .= '/' . $part;
+                    clearstatcache(true, $path);
+                    if (is_link($path) || (file_exists($path) && ($index === count($parts) - 1 || !is_dir($path)))) {
+                        throw new UserError("Dataset-Zielkollision: Ziel ./$target für {$child['name']} verdeckt Quelldaten von {$parent['name']} unter $path");
+                    }
+                }
+            }
+        }
     }
 
     private static function command(array $job, array $plan, array $item, string $source, string $target, ?string $previous, bool $dryRun, bool $checksum): array
@@ -215,6 +253,7 @@ df -B1 --output=avail -- "$probe"
 
     public static function transfer(array $job, array $plan, string $snapshot, callable $log, ?callable $cancel = null, bool $verify = false): array
     {
+        self::assertTargetMappings($plan, $snapshot);
         $base = self::base($job);
         $versioned = $job['target']['mode'] === 'versioned';
         $versions = $versioned ? self::versions($job) : [];

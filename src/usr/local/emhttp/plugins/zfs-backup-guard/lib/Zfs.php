@@ -493,8 +493,13 @@ final class Zfs
                 }
             }
             $protect = array_map(static fn($name) => str_contains($name, '@') ? explode('@', $name, 2)[1] : $name, $protected[$item['name']] ?? []);
-            $retention = Retention::plan($items, $job['snapshots']['keep'], $protect);
-            foreach ($retention['destroy'] as $name) {
+            // Only successfully copied rsync sources may discard their last local recovery point.
+            $removeAll = $job['method'] === 'rsync' && !empty($job['snapshots']['removeAfterRsync'])
+                && $item['action'] === 'copy';
+            $destroy = $removeAll
+                ? array_diff(array_column($items, 'name'), $protect)
+                : Retention::plan($items, $job['snapshots']['keep'], $protect)['destroy'];
+            foreach ($destroy as $name) {
                 if ($cancel !== null && $cancel()) {
                     throw new \RuntimeException('Abgebrochen');
                 }

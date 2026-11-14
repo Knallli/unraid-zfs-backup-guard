@@ -26,7 +26,8 @@
     if (k.weekly) parts.push(`${k.weekly} W`);
     if (k.monthly) parts.push(`${k.monthly} M`);
     if (k.yearly) parts.push(`${k.yearly} J`);
-    return parts.join(' · ') || 'nur neuester';
+    const retention = parts.join(' · ') || 'nur neuester';
+    return job.method === 'rsync' && job.snapshots.removeAfterRsync ? `Kopierte Quellen: alle ungeschützten eigenen Snapshots nach Erfolg entfernen · Snapshot-only: ${retention}` : retention;
   }
   Z.methodLabel = methodLabel;
   Z.targetLabel = targetLabel;

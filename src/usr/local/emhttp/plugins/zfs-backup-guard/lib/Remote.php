@@ -20,6 +20,14 @@ final class Remote
         }, $cmd));
     }
 
+    public static function validHost(string $host): bool
+    {
+        if (str_contains($host, ':')) {
+            return filter_var($host, FILTER_VALIDATE_IP, FILTER_FLAG_IPV6) !== false;
+        }
+        return preg_match('~^[A-Za-z0-9][A-Za-z0-9.\-]*$~D', $host) === 1;
+    }
+
     public static function command(?array $ssh, array $cmd): array
     {
         if ($ssh === null) {
@@ -35,7 +43,7 @@ final class Remote
         $host = (string)($ssh['host'] ?? '');
         $user = (string)($ssh['user'] ?? 'root');
         $port = (string)($ssh['port'] ?? 22);
-        if (!preg_match('~^[A-Za-z0-9][A-Za-z0-9.\-:\[\]]*$~', $host)
+        if (!self::validHost($host)
             || !preg_match('~^[a-z_][a-z0-9_\-]*$~', $user)
             || !ctype_digit($port) || (int)$port < 1 || (int)$port > 65535) {
             throw new UserError('SSH-Host, Benutzer oder Port ungültig');

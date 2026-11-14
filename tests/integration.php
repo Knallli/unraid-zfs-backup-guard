@@ -19,6 +19,7 @@ require __DIR__ . '/../src/usr/local/emhttp/plugins/zfs-backup-guard/include/boo
 use ZBG\{Browse, Exec, History, Job, JobStore, Restore, Retention, Runner, RunState, Versions, Zfs};
 
 $created = [];
+$mountpoints = []; // explicit mountpoints: ZFS leaves them as empty dirs (= Unraid shares) after destroy
 $clones = [];
 $container = null;
 $sshd = null;
@@ -70,6 +71,47 @@ function jobFor(string $id, string $mode = 'mirror'): array
         'target' => ['path' => $targetPath . '/' . $id, 'mode' => $mode], 'notify' => 'none',
         'snapshots' => ['keep' => ['hourly' => 0, 'daily' => 1, 'weekly' => 0, 'monthly' => 0, 'yearly' => 0]],
         'versions' => ['keep' => ['daily' => 3, 'weekly' => 0, 'monthly' => 0]]]);
+}
+function restoreSelectionCases(array $params, string $prefix): void
+{
+    $refused = [
+        'link-only' => ['/link-stable'],
+        'sibling' => ['/restore-sibling'],
+        'chain-intermediate' => ['/stable.txt', '/link-chain'],
+        'subtree-chain-intermediate' => ['/restore-tree/document.txt', '/restore-tree/chain'],
+        'dangling-only' => ['/restore-tree/dangling'],
+    ];
+    foreach ($refused as $name => $paths) {
+        $destination = $prefix . '/refused-' . $name . '/destination';
+        try {
+            Restore::copy($params + ['paths' => $paths, 'target' => $destination]);
+            expect(false, 'restore must reject an incomplete link selection: ' . $name);
+        } catch (ZBG\UserError) {
+            expect(true, 'restore rejects an incomplete link selection: ' . $name);
+        }
+        expect(!file_exists($destination) && !is_link($destination) && !file_exists(dirname($destination)),
+            'selection rejection creates neither destination nor parent: ' . $name);
+    }
+    $chain = Restore::copy($params + [
+        'paths' => ['/stable.txt', '/link-stable', '/link-chain'], 'target' => $prefix . '/chain']);
+    expect(is_link($chain['target'] . '/link-stable') && is_link($chain['target'] . '/link-chain')
+        && file_get_contents($chain['target'] . '/link-chain') === "unchanged\n",
+        'restore preserves a completely selected link chain');
+    expect(!file_exists($chain['target'] . '/alpha.txt'), 'restore does not copy unselected siblings');
+    $tree = Restore::copy($params + [
+        'paths' => ['/restore-tree', '/restore-tree/link'], 'target' => $prefix . '/tree']);
+    expect(is_link($tree['target'] . '/restore-tree/link') && is_link($tree['target'] . '/restore-tree/chain')
+        && file_get_contents($tree['target'] . '/restore-tree/chain') === "selected subtree\n",
+        'restore preserves links inside a selected subtree after selection minimization');
+    expect(is_link($tree['target'] . '/restore-tree/dangling')
+        && readlink($tree['target'] . '/restore-tree/dangling') === 'missing.txt'
+        && !file_exists($tree['target'] . '/restore-tree/missing.txt'),
+        'restore preserves an existing dangling relative link inside a selected subtree');
+    $siblings = Restore::copy($params + [
+        'paths' => ['/restore-sibling', '/stable.txt'], 'target' => $prefix . '/siblings']);
+    expect(is_link($siblings['target'] . '/restore-sibling/link')
+        && file_get_contents($siblings['target'] . '/restore-sibling/link') === "unchanged\n",
+        'restore preserves a subtree link when its sibling target is also selected');
 }
 function removeTree(string $path): void
 {
@@ -128,6 +170,7 @@ try {
     foreach ([[$source, $sourcePath], [$target, $targetPath]] as [$dataset, $path]) {
         Exec::ok(['zfs', 'create', '-o', 'mountpoint=' . $path, $dataset]);
         $created[] = $dataset;
+        $mountpoints[] = $path;
     }
     Exec::ok(['zfs', 'create', $source . '/child with spaces']);
     Exec::ok(['zfs', 'create', $source . '/excluded']);
@@ -182,6 +225,14 @@ try {
         expect($error->result['verification']['mismatches'] === 1, 'checksum detects one actually corrupted file');
     }
     symlink('stable.txt', $sourcePath . '/link-stable');
+    symlink('link-stable', $sourcePath . '/link-chain');
+    mkdir($sourcePath . '/restore-tree');
+    file_put_contents($sourcePath . '/restore-tree/document.txt', "selected subtree\n");
+    symlink('document.txt', $sourcePath . '/restore-tree/link');
+    symlink('link', $sourcePath . '/restore-tree/chain');
+    symlink('missing.txt', $sourcePath . '/restore-tree/dangling');
+    mkdir($sourcePath . '/restore-sibling');
+    symlink('../stable.txt', $sourcePath . '/restore-sibling/link');
     symlink('/etc/passwd', $sourcePath . '/escape-link');
     symlink('cycle-link', $sourcePath . '/cycle-link');
 
@@ -213,6 +264,8 @@ try {
     $linkedRestore = Restore::copy(['job' => $versioned['id'], 'version' => $v1['name'],
         'paths' => ['/stable.txt', '/link-stable'], 'target' => $targetPath . '/restored-link']);
     expect(is_link($linkedRestore['target'] . '/link-stable') && file_get_contents($linkedRestore['target'] . '/link-stable') === "unchanged\n", 'safe relative link restored with its target');
+    restoreSelectionCases(['job' => $versioned['id'], 'version' => $v1['name']],
+        $targetPath . '/selection-local');
     foreach (['escape-link', 'cycle-link'] as $unsafeLink) {
         try {
             Restore::copy(['job' => $versioned['id'], 'version' => $v1['name'], 'paths' => ['/' . $unsafeLink],
@@ -224,6 +277,8 @@ try {
     $snap = array_values(array_filter(Zfs::snapshots($source), fn($s) => $s['job'] === $versioned['id'] && $s['own']))[0];
     $snapshotRestore = Restore::copy(['dataset' => $source, 'snapshot' => $snap['snapshot'], 'paths' => ['/stable.txt'], 'target' => $targetPath . '/restored-snapshot']);
     expect(file_get_contents($snapshotRestore['target'] . '/stable.txt') === "unchanged\n", 'snapshot restore copies selected file');
+    restoreSelectionCases(['dataset' => $source, 'snapshot' => $snap['snapshot']],
+        $targetPath . '/selection-snapshot');
     try {
         Browse::list($source, $snap['snapshot'], '../');
         expect(false, 'snapshot traversal must be rejected');
@@ -234,6 +289,110 @@ try {
     Restore::removeClone($clone['dataset']);
     $clones = [];
     expect(!in_array($clone['dataset'], array_column(Restore::clones(), 'dataset'), true), 'owned clone cleaned up');
+
+    // Isolated real rsync source: cleanup must distinguish copied datasets from
+    // snapshot-only children, and must never consume another owner's snapshots.
+    $cleanupSource = $pool . '/zbg-integration-cleanup-source-' . $token;
+    $cleanupPath = $sourcePath . '-cleanup';
+    Exec::ok(['zfs', 'create', '-o', 'mountpoint=' . $cleanupPath, $cleanupSource]);
+    $created[] = $cleanupSource;
+    $mountpoints[] = $cleanupPath;
+    Exec::ok(['zfs', 'create', $cleanupSource . '/copied']);
+    Exec::ok(['zfs', 'create', '-o', 'mountpoint=none', $cleanupSource . '/snapshot-only']);
+    Exec::ok(['zfs', 'create', '-V', '16M', $cleanupSource . '/volume']);
+    file_put_contents($cleanupPath . '/document.txt', "cleanup v1\n");
+    file_put_contents($cleanupPath . '/copied/child.txt', "copied child\n");
+    $cleanupJob = jobFor('integration-cleanup', 'versioned');
+    $cleanupJob['source'] = ['dataset' => $cleanupSource, 'recursive' => true, 'exclude' => []];
+    $cleanupJob['snapshots']['keep'] = ['hourly' => 0, 'daily' => 0, 'weekly' => 0, 'monthly' => 0, 'yearly' => 0];
+    $cleanupJob = Job::normalize($cleanupJob);
+    JobStore::save($cleanupJob);
+    runBackup($cleanupJob);
+    $cleanupPlan = Zfs::plan($cleanupSource, true, []);
+    $copiedDatasets = [$cleanupSource, $cleanupSource . '/copied'];
+    $snapshotOnlyDatasets = [$cleanupSource . '/snapshot-only', $cleanupSource . '/volume'];
+    foreach (array_merge($copiedDatasets, $snapshotOnlyDatasets) as $dataset) {
+        $own = array_values(array_filter(Zfs::snapshots($dataset),
+            fn($s) => $s['own'] && $s['job'] === $cleanupJob['id']));
+        expect(count($own) === 1, 'default rsync keeps newest snapshot with zero retention: ' . $dataset);
+    }
+    $cleanupVersion = Versions::list($cleanupJob)[0];
+    $cleanupManifestPath = $cleanupVersion['path'] . '/.zbg-version.json';
+    $cleanupManifest = json_decode((string)file_get_contents($cleanupManifestPath), true, 512, JSON_THROW_ON_ERROR);
+    $cleanupManifest['time'] = strtotime('yesterday noon');
+    RunState::atomic($cleanupManifestPath, $cleanupManifest);
+    foreach (['20000101-000000', '20000102-000000'] as $stamp) {
+        Zfs::snapshotSelected($cleanupJob, $cleanupPlan, 'zbg_' . $cleanupJob['id'] . '_' . $stamp);
+    }
+    $cleanupForeign = 'zbg_' . $cleanupJob['id'] . '_19990101-000000';
+    $otherOwner = 'integration-cleanup-other';
+    $otherSnapshot = 'zbg_' . $otherOwner . '_20000101-000000';
+    foreach ($copiedDatasets as $dataset) {
+        Exec::ok(['zfs', 'snapshot', $dataset . '@' . $cleanupForeign]);
+        Exec::ok(['zfs', 'snapshot', '-o', 'zbg:job=' . $otherOwner, $dataset . '@' . $otherSnapshot]);
+    }
+    $cleanupJob['snapshots']['removeAfterRsync'] = true;
+    $cleanupJob = Job::normalize($cleanupJob);
+    JobStore::save($cleanupJob, $cleanupJob['id']);
+    $beforeCleanupDryRun = snapshotNames($cleanupSource);
+    runBackup($cleanupJob, true);
+    expect(snapshotNames($cleanupSource) === $beforeCleanupDryRun,
+        'cleanup-enabled dry-run preserves all source snapshots');
+
+    file_put_contents($cleanupPath . '/document.txt', "cleanup v2\n");
+    $beforeCleanupFailure = snapshotNames($cleanupSource);
+    $cleanupLatest = readlink($cleanupJob['target']['path'] . '/latest');
+    // Flip the target read-only only after preflight, so failure exercises the
+    // real transfer path after the new source snapshots have been committed.
+    $cleanupFailureHook = $targetPath . '/cleanup-readonly-hook.sh';
+    file_put_contents($cleanupFailureHook, "#!/bin/sh\nzfs set readonly=on " . escapeshellarg($target) . "\n");
+    chmod($cleanupFailureHook, 0700);
+    $cleanupJob['hooks']['pre'] = $cleanupFailureHook;
+    JobStore::save($cleanupJob, $cleanupJob['id']);
+    try {
+        nextSecond();
+        fresh();
+        $cleanupFailed = Runner::run($cleanupJob);
+    } finally {
+        $cleanupJob['hooks']['pre'] = null;
+        Exec::ok(['zfs', 'set', 'readonly=off', $target]);
+        JobStore::save($cleanupJob, $cleanupJob['id']);
+    }
+    expect(($cleanupFailed['result'] ?? $cleanupFailed['state'] ?? '') === 'failed',
+        'cleanup-enabled backup fails on a real read-only destination');
+    expect(!array_diff($beforeCleanupFailure, snapshotNames($cleanupSource)),
+        'failure before cleanup preserves every pre-existing source snapshot');
+    foreach ($copiedDatasets as $dataset) {
+        $own = array_values(array_filter(Zfs::snapshots($dataset),
+            fn($s) => $s['own'] && $s['job'] === $cleanupJob['id']));
+        expect(count($own) === 4, 'failed rsync also retains its newly created source snapshot: ' . $dataset);
+    }
+    expect(readlink($cleanupJob['target']['path'] . '/latest') === $cleanupLatest
+        && file_get_contents($cleanupVersion['path'] . '/document.txt') === "cleanup v1\n",
+        'failed cleanup-enabled backup preserves the readable published version');
+
+    runBackup($cleanupJob, false, true);
+    foreach ($copiedDatasets as $dataset) {
+        $snapshots = Zfs::snapshots($dataset);
+        $own = array_filter($snapshots, fn($s) => $s['own'] && $s['job'] === $cleanupJob['id']);
+        expect(count($own) === 0, 'successful rsync removes older and newest own snapshots: ' . $dataset);
+        $names = array_column($snapshots, 'snapshot');
+        expect(in_array($cleanupForeign, $names, true) && in_array($otherSnapshot, $names, true),
+            'cleanup preserves unowned matching names and another job owner: ' . $dataset);
+    }
+    foreach ($snapshotOnlyDatasets as $dataset) {
+        $own = array_values(array_filter(Zfs::snapshots($dataset),
+            fn($s) => $s['own'] && $s['job'] === $cleanupJob['id']));
+        expect(count($own) === 1 && !in_array($own[0]['snapshot'], $beforeCleanupFailure, true),
+            'snapshot-only dataset uses normal retention and retains the latest backup: ' . $dataset);
+    }
+    $cleanupVersions = Versions::list($cleanupJob);
+    expect(count($cleanupVersions) === 2
+        && file_get_contents($cleanupVersion['path'] . '/document.txt') === "cleanup v1\n",
+        'source snapshot cleanup leaves the older target version readable');
+    expect(file_get_contents($cleanupJob['target']['path'] . '/latest/document.txt') === "cleanup v2\n"
+        && file_get_contents($cleanupJob['target']['path'] . '/latest/copied/child.txt') === "copied child\n",
+        'verified target files remain readable after all copied source snapshots are removed');
 
     $send = jobFor('integration-send');
     $send['method'] = 'zfs';
@@ -277,6 +436,7 @@ try {
     Exec::ok(['zfs', 'create', '-o', 'encryption=aes-256-gcm', '-o', 'keyformat=raw',
         '-o', 'keylocation=file://' . $keyFile, '-o', 'mountpoint=' . $sourcePath . '-encrypted', $encryptedSource]);
     $created[] = $encryptedSource;
+    $mountpoints[] = $sourcePath . '-encrypted';
     file_put_contents($sourcePath . '-encrypted/secret.txt', 'encrypted fixture');
     Exec::ok(['zfs', 'unmount', $encryptedSource]);
     Exec::ok(['zfs', 'unload-key', $encryptedSource]);
@@ -388,6 +548,8 @@ try {
             'paths' => ['/' . $oddName, '/stable.txt', '/link-stable'], 'target' => $targetPath . '/restored-ssh']);
         expect(file_get_contents($remoteRestore['target'] . '/' . $oddName) === 'odd filename content', 'remote version restore copies exact selected filename');
         expect(is_link($remoteRestore['target'] . '/link-stable') && file_get_contents($remoteRestore['target'] . '/link-stable') === "unchanged\n", 'remote version restore preserves safe links');
+        restoreSelectionCases(['job' => $sshJob['id'], 'version' => $sshVersion['name']],
+            $targetPath . '/selection-ssh');
         $sshSend = $send;
         $sshSend['id'] = 'integration-ssh-send';
         $sshSend['name'] = 'SSH send';
@@ -454,6 +616,9 @@ try {
     foreach (array_reverse($created) as $dataset) {
         if (!str_starts_with($dataset, $pool . '/zbg-integration-') || !str_ends_with($dataset, $token)) { continue; }
         Exec::run(['zfs', 'destroy', '-r', $dataset], 120);
+    }
+    foreach (array_reverse($mountpoints) as $path) {
+        if (str_contains(basename($path), $token) && is_dir($path) && !is_link($path)) { @rmdir($path); }
     }
     removeTree($work);
 }

@@ -23,7 +23,7 @@ final class Job
             'schedule' => '0 2 * * *',
             'verify' => false,
             'system' => false,
-            'snapshots' => ['keep' => ['hourly' => 0, 'daily' => 7, 'weekly' => 4, 'monthly' => 3, 'yearly' => 0]],
+            'snapshots' => ['removeAfterRsync' => false, 'keep' => ['hourly' => 0, 'daily' => 7, 'weekly' => 4, 'monthly' => 3, 'yearly' => 0]],
             'versions' => ['keep' => ['daily' => 14, 'weekly' => 8, 'monthly' => 6]],
             'consistency' => ['mode' => 'crash', 'containers' => []],
             'hooks' => ['pre' => null, 'post' => null],
@@ -107,6 +107,7 @@ final class Job
                 throw new UserError('Systemdisk-Backup nur für das Unraid-Boot-Dataset (/boot)');
             }
         }
+        $j['snapshots']['removeAfterRsync'] = $j['method'] === 'rsync' && (bool)($in['snapshots']['removeAfterRsync'] ?? false);
         foreach (self::KEEP_SNAP as $k) {
             $j['snapshots']['keep'][$k] = self::int($in['snapshots']['keep'][$k] ?? $d['snapshots']['keep'][$k], 0, 1000);
         }
@@ -154,7 +155,7 @@ final class Job
         }
         $host = trim((string)$s['host']);
         $user = trim((string)($s['user'] ?? 'root'));
-        if (!preg_match('~^[A-Za-z0-9.\-:\[\]]+$~', $host) || !preg_match('~^[a-z_][a-z0-9_\-]*$~', $user)) {
+        if (!Remote::validHost($host) || !preg_match('~^[a-z_][a-z0-9_\-]*$~', $user)) {
             throw new UserError('SSH-Host oder -Benutzer ungültig');
         }
         $key = trim((string)($s['key'] ?? ''));

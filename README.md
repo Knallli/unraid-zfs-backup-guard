@@ -19,15 +19,27 @@ Oberfläche: **Settings → ZFS Backup Guard**. Der Installer lädt das Paket au
 - **ZFS:** Individuelle Streams für die ausgewählten Datasets, lokal oder über SSH. GUID-geprüfte gemeinsame Snapshots ermöglichen inkrementelle Streams; verschlüsselte Quellen werden roh übertragen. Unterbrochene, diesem Job eindeutig zugeordnete Empfangsstreams werden fortgesetzt. Kein erzwungenes Rollback (`receive -F`). Ziel-Datasets bleiben ungemountet und schreibgeschützt.
 - **Konsistenz:** Crash-konsistent oder ausgewählte Docker-Container für den Snapshot pausieren/stoppen. Nur tatsächlich veränderte Container werden danach zurückgesetzt; zuvor gestoppte Container werden nicht gestartet. VMs bleiben crash-konsistent.
 - **Prüfung:** Optionaler rsync-Prüfsummenvergleich gegen den Snapshot; Abweichungen werden als Fehler behandelt. ZFS-Empfang wird über Snapshot-GUIDs bestätigt.
-- **Retention:** Gestaffelte Snapshot-/Versionsaufbewahrung nur nach Erfolg; der neueste Stand und notwendige gemeinsame Replikationsbasen bleiben erhalten. Snapshot-Löschung benötigt passenden Namen **und** lokale `zbg:job`-Eigentümerschaft. Fremde Snapshots bleiben unangetastet.
+- **Retention:** Gestaffelte Snapshot-/Versionsaufbewahrung nur nach Erfolg; normalerweise bleiben der neueste Stand und notwendige gemeinsame Replikationsbasen erhalten. Die ausdrückliche rsync-Option zum vollständigen Entfernen kopierter Quell-Snapshots ist unten beschrieben. Snapshot-Löschung benötigt passenden Namen **und** lokale `zbg:job`-Eigentümerschaft. Fremde Snapshots bleiben unangetastet.
 
 Quellen mit `mountpoint=none`, ungemountete Datasets und Zvols haben keinen Dateizugriff. Bei rsync werden sie als „nur Snapshot“ ausgewiesen; zur vollständigen Replikation solcher Quellen ZFS wählen. Abweichende Kind-Mountpoints und Dataset-Namen mit Leerzeichen werden unterstützt.
+
+Bei rsync erhalten außerhalb der Quelle gemountete Kinder einen Pfad unter `.datasets/`. Würde diese Zuordnung reguläre Quelldateien, Verzeichnisse oder Symlinks verdecken, wird der Lauf abgewiesen: zuerst in der Vorprüfung und erneut gegen die Snapshot-Quellen vor dem Transfer. Bestehende Backup-Zuordnungen werden nicht automatisch umgestellt.
+
+### Quell-Snapshots nach rsync entfernen
+
+Im Jobeditor unter **Aufbewahrung → Quell-Snapshots nach erfolgreichem rsync vollständig entfernen** lässt sich das Verhalten des bisherigen Backup-Skripts einschalten. Standardmäßig ist die Option aus. Im Job-JSON heißt sie `snapshots.removeAfterRsync`.
+
+Bei aktivierter Option werden nach erfolgreichem rsync, optionaler Prüfsummenprüfung und erfolgreichem Post-Hook alle eigenen Snapshots tatsächlich kopierter Datasets entfernt – auch ältere und der neueste. Explizit geschützte Snapshots bleiben erhalten. „Nur Snapshot“-Datasets behalten ihre normale Snapshot-Retention einschließlich des neuesten Stands. Die Option gilt nicht für ZFS-Replikation.
+
+Probeläufe und Fehler/Abbrüche vor der Bereinigung löschen keine Snapshots. Bereits erfolgte Löschungen können bei einem Fehler oder Abbruch während der Bereinigung nicht zurückgenommen werden. Die Dateien und Versionsordner am rsync-Ziel sind unabhängig von den Quell-Snapshots; ihre Aufbewahrung bleibt unverändert. **Im Spiegel-Modus gibt es ohne Quell-Snapshots keine lokale Historie dieser Sicherung** – ältere Stände benötigen ein separates nachgelagertes Backup.
 
 ### Ziele und SSH
 
 Dateiziele müssen kanonisch unter `/mnt` liegen, gemountet und beschreibbar sein und dürfen nicht innerhalb der Quelle liegen. Neue Zielverzeichnisse sind leer; das Plugin schreibt eine Job-Eigentumsmarkierung. Einen bestehenden Spiegel kann man nur mit der ausdrücklichen Option **Vorhandenen Spiegel übernehmen** verwenden. Diese Option erlaubt rsync-Löschungen am Spiegel; sie ist kein Probelauf. Fremde Eigentumsmarkierungen und nicht zugeordnete ZFS-Ziele werden nicht überschrieben.
 
 Remote-Dateiziele benötigen SSH, rsync sowie GNU-Shell-/Coreutils-Werkzeuge (`find`, `stat`, `realpath`, `df`, `mv`, `rm`). ZFS-Ziele benötigen zusätzlich OpenZFS und einen ONLINE-Zielpool. Schlüssel werden als vorhandene Dateipfade referenziert, nicht kopiert. SSH arbeitet ohne interaktive Passwortabfrage und mit strikter Hostschlüsselprüfung. Den Hostschlüssel vorher vertrauenswürdig in `known_hosts` hinterlegen oder eine eigene **Known-Hosts-Datei** referenzieren; unbekannte/geänderte Hostschlüssel werden abgewiesen.
+
+SSH-Hosts können Hostnamen, IPv4-Adressen oder ungeklammerte IPv6-Adressen wie `::1` und `2001:db8::1` sein. Speichern und Transport verwenden dieselbe Hostvalidierung; nötige IPv6-Klammern für rsync ergänzt das Plugin.
 
 ### Probelauf und Abbruch
 
@@ -44,6 +56,8 @@ Unraid-Benachrichtigungen: alle Ereignisse, nur Fehler oder keine. Optional läs
 ## Wiederherstellung
 
 Snapshot- und Versionsbrowser zeigen Dateien und Ordner; versionierte SSH-Backups können ebenfalls durchsucht und auf den lokalen Server zurückkopiert werden. Standardmäßig entsteht ein neuer `restore-…`-Ordner neben dem Original. Ein eigenes Ziel muss ein **neuer** kanonischer `/mnt`-Pfad sein. Vorhandene Ziele werden nicht überschrieben. Relative, innerhalb der Auswahl liegende Symlinks werden erhalten; ausbrechende/zyklische Links und Gerätedateien werden abgewiesen. Fehlgeschlagene Kopien behalten ihren als unvollständig gemeldeten Restore-Ordner.
+
+Bei einer Dateiauswahl müssen auch die Ziele und Zwischenlinks einer Symlink-Kette mit ausgewählt sein. Ein ausgewähltes Verzeichnis umfasst seinen ganzen Teilbaum. Links auf nicht ausgewählte Geschwister werden lokal und per SSH vor dem Anlegen des Restore-Ziels abgewiesen; zusätzliche Dateien werden nicht automatisch mitkopiert.
 
 Snapshots können in temporäre, ausdrücklich dem Plugin zugeordnete Datasets geklont, durchsucht und wieder entfernt werden. Die Oberfläche zeigt einen Rollback-Befehl mit Warnung; ein In-place-Rollback wird **nicht ausgeführt**.
 
@@ -108,3 +122,12 @@ Die Entwicklungsoberfläche `dev/` verwendet ausdrücklich Mock-Daten. Die reale
 Für 2026.10.14a auf Unraid 7.4.0-rc.1 geprüft: 120 Fixture-Tests und 74 reale Integrationsprüfungen mit dem Pool `cache`, isoliertem Loopback-SSH und einem eigenen Container aus dem bereits vorhandenen Image `postgres:17-alpine`. Die installierte Weboberfläche wurde zusätzlich mit einem echten manuell gestarteten Backup, Datei-Restore und Dashboard-Status geprüft. Bestehende Backup-Skripte und deren Zeitpläne wurden dabei nicht geändert.
 
 `PLAN.md` dokumentiert den ursprünglichen Funktionsplan. `plugin/zfs-backup-guard.xml` enthält die Metadaten nach dem [Community-Applications-Pluginformat](https://ca.unraid.net/submit/help/repository-xml). Die Aufnahme in Community Applications erfordert eine separate manuelle Einreichung und Prüfung; sie ist nicht automatisch durch Veröffentlichung des Repositorys erfolgt.
+
+## Änderungen 2026.10.15
+
+- rsync weist kollidierende Dataset-Zielpfade ab, statt reguläre Quelldaten unbemerkt auszuschließen; Prüfung auch gegen den fertigen Snapshot.
+- Wiederherstellung prüft Symlink-Ziele und Zwischenlinks gegen die tatsächliche Auswahl, lokal und per SSH.
+- Einheitliche SSH-Hostvalidierung unterstützt auch IPv6-Adressen mit führendem `::`.
+- Neue rsync-Option `snapshots.removeAfterRsync`: vollständige Bereinigung eigener Snapshots kopierter Quellen nach erfolgreicher Kopie; Snapshot-only und ZFS-Replikationsbasen bleiben geschützt. Editor, Zusammenfassung und Jobkarten berücksichtigen die Option.
+- Für die Snapshot-Option geprüft: 161 Fixture-Tests, Browserbedienung der lokalen Mock-Oberfläche und 15 Ablaufprüfungen mit echtem Runner/rsync sowie simulierten ZFS-Kommandos. Echte OpenZFS-Integrationstests wurden ergänzt, konnten wegen nicht erreichbarer Serveranbindung aber nicht ausgeführt werden.
+- Lokal unter WSL/PHP 8.4 geprüft: 161 Fixture-Tests, 19 isolierte Smoke-Prüfungen mit echtem rsync und IPv6-Loopback-SSH sowie Syntaxprüfung und Paketbau in einer Wegwerfkopie. Die vollständige OpenZFS-/Docker-Integration und die reale Unraid-Oberfläche wurden für diese Korrekturen nicht erneut geprüft.

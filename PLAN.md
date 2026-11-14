@@ -60,7 +60,7 @@ Status: Phasen 1–6 implementiert für 2026.10.14a: Runner, aktive Zeitplanung,
     "ssh": null                                // {host,user,port,key} für Remote
   },
   "schedule": "0 2 * * *",
-  "snapshots": { "keep": { "hourly": 0, "daily": 7, "weekly": 4, "monthly": 3, "yearly": 0 } },
+  "snapshots": { "removeAfterRsync": false, "keep": { "hourly": 0, "daily": 7, "weekly": 4, "monthly": 3, "yearly": 0 } },
   "versions":  { "keep": { "daily": 14, "weekly": 8, "monthly": 6 } },   // nur versioned
   "consistency": { "mode": "crash", "stopContainers": [] },            // crash | pause | stop
   "hooks": { "pre": null, "post": null },
@@ -79,7 +79,7 @@ Status: Phasen 1–6 implementiert für 2026.10.14a: Runner, aktive Zeitplanung,
    - **rsync, versioned:** Das Ziel bekommt die Struktur `<path>/<YYYY-mm-dd_HHMMSS>/…` mit `--link-dest=<letzte Version>`. Unveränderte Dateien sind Hardlinks und kosten kaum Platz. Dazu kommt ein Symlink `latest`. Funktioniert auf XFS. `--inplace` wird hier nicht verwendet.
    - **zfs send (lokal oder SSH):** inkrementell `-I` ab dem letzten gemeinsamen Snapshot, `-w` (raw) bei verschlüsselten Quellen, Empfang mit `zfs receive -s -u` (fortsetzbar über `receive_resume_token`). Optional `mbuffer` und `pv` für Durchsatz und Fortschritt. Kein `-F` ohne ausdrückliche Option. Auf dem Ziel gilt eine eigene Retention.
 5. **Prüfung (optional, z. B. wöchentlich):** `rsync -n --checksum` gegen den Snapshot. Abweichungen werden gezählt und gemeldet.
-6. **Aufräumen:** Snapshot-Retention (gestaffelt stündlich/täglich/wöchentlich/monatlich/jährlich), Versions-Retention am Ziel. Läuft **nur nach erfolgreichem Lauf**, der neueste Snapshot wird nie gelöscht, und es bleibt immer mindestens ein gemeinsamer Snapshot für `zfs send` erhalten.
+6. **Aufräumen:** Snapshot-Retention (gestaffelt stündlich/täglich/wöchentlich/monatlich/jährlich), Versions-Retention am Ziel. Erst nach erfolgreichem Transfer, optionaler Prüfung und Post-Hook. Normalerweise bleibt der neueste Snapshot; die ausdrückliche rsync-Option `snapshots.removeAfterRsync` entfernt stattdessen alle ungeschützten eigenen Snapshots tatsächlich kopierter Datasets. Snapshot-only-Datasets behalten die normale Retention. Für `zfs send` bleibt mindestens eine gemeinsame Basis erhalten; Zielversionen werden unabhängig aufbewahrt.
 7. **Abschluss:** Eintrag im Verlauf (Dauer, übertragene Bytes, Dateien, Fehler), Unraid-Notify, Healthchecks-Ping (`/start`, Erfolg, `/fail`).
 
 ### 3.3 Überwachung
