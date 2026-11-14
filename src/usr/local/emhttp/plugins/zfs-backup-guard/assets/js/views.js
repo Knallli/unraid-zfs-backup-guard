@@ -145,7 +145,7 @@
       </div>
       <div class="job-stats">
         <div><span>Letztes Backup</span><b title="${esc(fmt.dateFull(last?.end))}">${last ? esc(fmt.rel(last.end)) : '—'}</b></div>
-        <div><span>Nächster Lauf</span><b title="${esc(Z.cron.describe(job.schedule))}">${job.enabled ? esc(fmt.when(j.nextRun)) : 'pausiert'}</b></div>
+        <div><span>Nächster Lauf</span><b title="${esc(Z.cron.describe(job.schedule))}">${job.enabled ? (j.nextRun ? esc(fmt.when(j.nextRun)) : 'nie (Zeitplan trifft nie zu)') : 'pausiert'}</b></div>
         <div><span>Ø Dauer</span><b>${avg ? fmt.duration(avg) : '—'}</b></div>
         <div><span>Aufbewahrung</span><b>${esc(keepSummary(job))}</b></div>
       </div>
@@ -909,7 +909,9 @@
           <h3>${icon('archive')}Speicherorte</h3>
           <label class="zbg-field"><span>Log- und Verlaufsverzeichnis</span>
             <input class="zbg-input mono" id="set-logDir" value="${esc(s.logDir)}">
-            <small>Nicht auf dem Flash, um Schreiblast zu vermeiden. Falls nicht erreichbar: <code>/var/log/zfs-backup-guard</code></small></label>
+            <small>Nicht auf dem Flash, um Schreiblast zu vermeiden. Falls nicht erreichbar: <code>/var/log/zfs-backup-guard</code>. Beim Ändern ziehen Verlauf und Logs mit um.</small></label>
+          ${s.activeLogDir ? `<p class="muted">Aktuell genutzt: <code>${esc(s.activeLogDir)}</code></p>` : ''}
+          ${s.logFallback ? `<div class="zbg-callout tone-warn">${icon('alert')}<div><b>Ausweichverzeichnis aktiv:</b> Das konfigurierte Verzeichnis ist nicht erreichbar oder nicht beschreibbar. Verlauf und Logs liegen in <code>${esc(s.activeLogDir)}</code> (RAM) und gehen beim Neustart verloren.</div></div>` : ''}
           <label class="zbg-field"><span>Verlaufseinträge pro Job</span>
             <input class="zbg-input" id="set-historyLimit" type="number" min="50" max="5000" value="${esc(s.historyLimit)}"></label>
           <label class="zbg-field row"><input type="checkbox" id="set-globalLock"${s.globalLock ? ' checked' : ''}><span>Nur ein I/O-intensiver Lauf gleichzeitig (globale Sperre)</span></label>

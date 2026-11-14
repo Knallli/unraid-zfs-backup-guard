@@ -364,7 +364,7 @@ if (function_exists('pcntl_fork')) {
         $pid = pcntl_fork();
         if ($pid === 0) {
             try {
-                JobStore::save(['id' => $id, 'name' => $id, 'enabled' => false] + $base);
+                JobStore::save(['id' => $id, 'name' => $id, 'enabled' => false, 'target' => ['path' => '/mnt/user/backup/zfs-test/' . $id, 'mode' => 'mirror']] + $base);
                 exit(0);
             } catch (Throwable) { exit(1); }
         }
@@ -474,6 +474,9 @@ function removeFixtureTree(string $path): void
     }
     rmdir($path);
 }
+// Bereichsspezifische Zusatztests (gleiche Hilfsfunktionen check/eq/throws).
+foreach (glob(__DIR__ . '/run.d/*.php') ?: [] as $extraTests) { require $extraTests; }
+
 removeFixtureTree(getenv('ZBG_CONFIG_DIR'));
 
 echo $failures ? "\n$failures von $count Tests fehlgeschlagen\n" : "Alle $count Tests bestanden\n";

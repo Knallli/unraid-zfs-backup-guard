@@ -122,6 +122,9 @@ final class Job
         foreach (['pre', 'post'] as $h) {
             $v = $in['hooks'][$h] ?? null;
             $j['hooks'][$h] = ($v === null || $v === '') ? null : Paths::normalizeScript((string)$v);
+            if ($checkSystem && $j['hooks'][$h] !== null) {
+                self::assertHook($j['hooks'][$h]);
+            }
         }
         $j['notify'] = self::oneOf($in['notify'] ?? 'errors', ['all', 'errors', 'none'], 'Benachrichtigung');
         $j['maxAgeHours'] = self::int($in['maxAgeHours'] ?? 30, 1, 24 * 90);
@@ -137,6 +140,25 @@ final class Job
     {
         $s = strtr(mb_strtolower($s), ['ä' => 'ae', 'ö' => 'oe', 'ü' => 'ue', 'ß' => 'ss']);
         return substr(trim((string)preg_replace('~[^a-z0-9]+~', '-', $s), '-'), 0, 40) ?: 'job';
+    }
+
+    /** Hooks laufen als root: nur reguläre, root-eigene Dateien ohne Schreibrecht für Gruppe/andere. */
+    private static function assertHook(string $path): void
+    {
+        clearstatcache(true, $path);
+        $st = @lstat($path);
+        if ($st === false) {
+            throw new UserError("Hook-Skript nicht gefunden: $path");
+        }
+        if (($st['mode'] & 0170000) !== 0100000) {
+            throw new UserError("Hook-Skript muss eine reguläre Datei sein (kein Symlink oder Ordner): $path");
+        }
+        if ($st['uid'] !== 0) {
+            throw new UserError("Hook-Skript muss root gehören (chown root): $path");
+        }
+        if (($st['mode'] & 0022) !== 0) {
+            throw new UserError("Hook-Skript darf nicht für Gruppe oder andere beschreibbar sein (chmod go-w): $path");
+        }
     }
 
     private static function mountOf(string $dataset, bool $checkSystem): string

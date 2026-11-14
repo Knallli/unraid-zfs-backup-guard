@@ -54,12 +54,22 @@ final class Docker
             $journal($entries);
             $log("Container $mode: $name");
             $command = $mode === 'pause' ? ['docker', 'pause', $state['Id']] : ['docker', 'stop', '--time', '30', $state['Id']];
-            $result = Exec::stream($command, $log, $cancel, 90);
+            // Ohne Abbruch-Callback: ein abgebrochener CLI-Aufruf stoppt den Daemon nicht, der Container
+            // liefe danach weiter herunter und die Wiederherstellung sähe ihn fälschlich als laufend.
+            $result = Exec::stream($command, $log, null, 90);
             if ($result['code'] !== 0) {
                 throw new \RuntimeException("Container $name konnte nicht angehalten werden: " . $result['err']);
             }
         }
         return $entries;
+    }
+
+    /** Wartezeit, bis ein evtl. noch laufendes "docker stop" (--time 30) abgeschlossen ist. */
+    public static int $settleSeconds = 40;
+
+    private static function gone(\Throwable $e): bool
+    {
+        return (bool)preg_match('/No such (object|container)/i', $e->getMessage());
     }
 
     public static function recover(array $entries, callable $log, ?callable $journal = null): void
@@ -69,11 +79,27 @@ final class Docker
         foreach ($entries as $key => $entry) {
             try {
                 $identity = $entry['id'];
-                $state = self::inspect($identity);
-                if ($entry['mode'] === 'pause' && !empty($state['Paused'])) {
+                try {
+                    $state = self::inspect($identity);
+                    if ($entry['mode'] === 'stop' && !empty($state['Running'])) {
+                        // Ein unterbrochener Worker kann ein "docker stop" hinterlassen, das der Daemon noch ausführt.
+                        $deadline = microtime(true) + self::$settleSeconds;
+                        while (!empty($state['Running']) && microtime(true) < $deadline) {
+                            usleep(500000);
+                            $state = self::inspect($identity);
+                        }
+                    }
+                } catch (\Throwable $e) {
+                    if (!self::gone($e)) {
+                        throw $e;
+                    }
+                    $log('WARNUNG: Container ' . $entry['name'] . ' existiert nicht mehr (neu erstellt oder entfernt); nichts wiederherzustellen');
+                    $state = null;
+                }
+                if ($state !== null && $entry['mode'] === 'pause' && !empty($state['Paused'])) {
                     $log('Container fortsetzen: ' . $entry['name']);
                     Exec::ok(['docker', 'unpause', $identity], 60);
-                } elseif ($entry['mode'] === 'stop' && empty($state['Running'])) {
+                } elseif ($state !== null && $entry['mode'] === 'stop' && empty($state['Running'])) {
                     $log('Container starten: ' . $entry['name']);
                     Exec::ok(['docker', 'start', $identity], 90);
                 }

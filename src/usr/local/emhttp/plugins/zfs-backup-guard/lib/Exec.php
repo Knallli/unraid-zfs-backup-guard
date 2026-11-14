@@ -7,6 +7,13 @@ namespace ZBG;
 final class Exec
 {
     private static $observer = null;
+    /** Nur für Tests: fn(array $cmd): ?array{code,out,err}; null führt den Befehl wirklich aus. */
+    private static $fake = null;
+
+    public static function fake(?callable $fake): void
+    {
+        self::$fake = $fake;
+    }
 
     /** Runner journals child process groups so an unexpectedly killed worker is recoverable. */
     public static function observe(?callable $observer): void
@@ -46,6 +53,9 @@ final class Exec
     {
         if (!$cmd) {
             throw new \InvalidArgumentException('Leerer Prozessaufruf');
+        }
+        if (self::$fake !== null && ($faked = (self::$fake)(array_map('strval', $cmd), $timeout)) !== null) {
+            return $faked;
         }
         $setsid = is_executable('/usr/bin/setsid') ? '/usr/bin/setsid' : (is_executable('/bin/setsid') ? '/bin/setsid' : null);
         $argv = array_map('strval', $cmd);

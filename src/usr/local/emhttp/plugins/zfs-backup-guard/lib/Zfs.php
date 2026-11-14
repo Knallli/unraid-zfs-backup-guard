@@ -238,6 +238,11 @@ final class Zfs
             }
             return false;
         };
+        // Empfangene Replikate (lokale zbg:source) nie snapshotten: ein fremder Snapshot bricht ihre inkrementelle Kette
+        $replicas = self::replicas();
+        if (isset($replicas[$source])) {
+            throw new UserError("$source ist ein Replikationsziel von Backup Guard (Quelle {$replicas[$source]}) und kann nicht selbst gesichert werden");
+        }
         $members = [];
         $skipped = [];
         foreach ($all as $d) {
@@ -247,6 +252,10 @@ final class Zfs
             }
             if ($isExcluded($d['name'])) {
                 $skipped[] = ['name' => $d['name'], 'reason' => 'excluded'];
+                continue;
+            }
+            if (isset($replicas[$d['name']])) {
+                $skipped[] = ['name' => $d['name'], 'reason' => 'replica'];
                 continue;
             }
             $members[] = $d;
@@ -303,11 +312,25 @@ final class Zfs
         if ($pool && $pool['health'] !== 'ONLINE') {
             $warnings[] = ['level' => $pool['health'] === 'DEGRADED' ? 'warn' : 'block', 'msg' => "Pool {$pool['name']} ist {$pool['health']}"];
         }
+        $replicaSkips = array_column(array_filter($skipped, static fn($s) => $s['reason'] === 'replica'), 'name');
+        if ($replicaSkips) {
+            $warnings[] = ['level' => 'warn', 'msg' => 'Replikationsziel(e) übersprungen (kein Snapshot, sonst bricht die Replikationskette): ' . implode(', ', $replicaSkips)];
+        }
         $snapOnly = array_filter($items, static fn($i) => $i['action'] === 'snapshot-only');
         if ($snapOnly) {
             $warnings[] = ['level' => 'warn', 'msg' => count($snapOnly) . ' Dataset(s) sind nicht lesbar und werden per rsync nicht kopiert (nur Snapshot)'];
         }
         return ['source' => $source, 'items' => $items, 'skipped' => $skipped, 'warnings' => $warnings];
+    }
+
+    /** Datasets mit lokaler zbg:source (von Send empfangene Replikate): Name => Quelle. */
+    private static function replicas(): array
+    {
+        if (self::$fixture !== null && isset(self::$fixture['datasets'])) {
+            return self::$fixture['replicas'] ?? [];
+        }
+        $out = Exec::ok(['zfs', 'get', '-Hp', '-t', 'filesystem,volume', '-s', 'local', '-o', 'name,value', 'zbg:source'], 120);
+        return array_column(Exec::rows($out, ['name', 'value']), 'value', 'name');
     }
 
     public static function dataset(string $name): array
@@ -439,18 +462,53 @@ final class Zfs
         Exec::ok($cmd, 120);
     }
 
-    public static function destroyOwned(string $dataset, string $snapshot, string $job): void
+    /**
+     * Löscht genau einen eigenen Snapshot. Abhängige Klone (z. B. Wiederherstellungs-Klone) oder Holds
+     * blockieren das Löschen: Rückgabe ist dann der Grund, sonst null.
+     */
+    public static function destroyOwned(string $dataset, string $snapshot, string $job): ?string
     {
         self::assertDataset($dataset);
         if (!self::isOwn($snapshot, $job)) {
             throw new UserError('Fremder Snapshot wird nicht gelöscht');
         }
         $name = $dataset . '@' . $snapshot;
-        $property = explode("\t", trim(Exec::ok(['zfs', 'get', '-Hp', '-o', 'value,source', self::JOB_PROP, $name])));
-        if (($property[0] ?? '') !== $job || ($property[1] ?? '') !== 'local') {
+        $props = array_column(Exec::rows(Exec::ok(['zfs', 'get', '-Hp', '-o', 'property,value,source', self::JOB_PROP . ',clones,userrefs', $name]),
+            ['property', 'value', 'source']), null, 'property');
+        if (($props[self::JOB_PROP]['value'] ?? '') !== $job || ($props[self::JOB_PROP]['source'] ?? '') !== 'local') {
             throw new UserError("Snapshot hat keine lokale Eigentümerschaft: $name");
         }
-        Exec::ok(['zfs', 'destroy', $name], 120);
+        $blocker = self::destroyBlocker($props['clones']['value'] ?? '', $props['userrefs']['value'] ?? '0');
+        if ($blocker !== null) {
+            return $blocker;
+        }
+        $r = Exec::run(['zfs', 'destroy', $name], 120);
+        if ($r['code'] !== 0) {
+            // Klon oder Hold kann zwischen Prüfung und Löschen entstanden sein
+            if (self::destroyBusy($r['err'] . $r['out'])) {
+                return trim($r['err'] ?: $r['out']);
+            }
+            throw new \RuntimeException(sprintf('zfs destroy fehlgeschlagen (%d): %s', $r['code'], $r['err'] ?: $r['out']));
+        }
+        return null;
+    }
+
+    /** Grund, warum ein Snapshot nicht ohne -R/Release gelöscht werden kann (Properties clones, userrefs), sonst null. */
+    public static function destroyBlocker(string $clones, string $userrefs): ?string
+    {
+        $clones = trim($clones);
+        if ($clones !== '' && $clones !== '-') {
+            return "abhängige Klone ($clones)";
+        }
+        if (ctype_digit(trim($userrefs)) && (int)$userrefs > 0) {
+            return 'gehalten (' . (int)$userrefs . ' Hold(s), siehe zfs holds)';
+        }
+        return null;
+    }
+
+    public static function destroyBusy(string $error): bool
+    {
+        return (bool)preg_match('~dependent clones|snapshot is held|dataset is busy~i', $error);
     }
 
     /** Löschen aus der Oberfläche: nur eigene Snapshots, nie während der Job läuft, nie die ZFS-Replikationsbasis. */
@@ -469,7 +527,10 @@ final class Zfs
             if (($job['method'] ?? '') === 'zfs' && end($jobSnaps)['snapshot'] === $snapshot) {
                 throw new UserError('Der neueste Snapshot ist die Basis der nächsten inkrementellen Replikation und bleibt erhalten');
             }
-            self::destroyOwned($dataset, $snapshot, $hit['job']);
+            $blocker = self::destroyOwned($dataset, $snapshot, $hit['job']);
+            if ($blocker !== null) {
+                throw new UserError("Snapshot kann nicht gelöscht werden: $blocker");
+            }
         } finally {
             fclose($lock);
         }
@@ -503,8 +564,10 @@ final class Zfs
                 if ($cancel !== null && $cancel()) {
                     throw new \RuntimeException('Abgebrochen');
                 }
-                $log("Snapshot-Retention: {$item['name']}@$name");
-                self::destroyOwned($item['name'], $name, $job['id']);
+                // Blockierte Snapshots (Klon, Hold) überspringen statt den Lauf scheitern zu lassen
+                $blocker = self::destroyOwned($item['name'], $name, $job['id']);
+                $log($blocker === null ? "Snapshot-Retention: {$item['name']}@$name"
+                    : "WARNUNG: Snapshot-Retention übersprungen für {$item['name']}@$name: $blocker");
             }
         }
     }

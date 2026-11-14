@@ -37,6 +37,9 @@ final class Notify
     {
         if (($job['notify'] ?? 'errors') !== 'none') {
             $message = $status['ageSeconds'] === null ? 'Noch kein erfolgreiches Backup vorhanden' : 'Letztes erfolgreiches Backup vor ' . round($status['ageSeconds'] / 3600, 1) . ' Stunden (Grenze ' . $job['maxAgeHours'] . ' Stunden)';
+            if (($status['state'] ?? '') === 'failed') {
+                $message = 'Letzter Lauf fehlgeschlagen oder abgebrochen; ' . $message;
+            }
             self::send($job, 'warning', $message);
         }
     }

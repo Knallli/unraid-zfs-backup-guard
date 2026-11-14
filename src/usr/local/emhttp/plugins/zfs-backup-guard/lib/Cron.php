@@ -34,8 +34,9 @@ final class Cron
         if (in_array(7, $sets[4], true)) {
             $sets[4] = array_values(array_unique(array_merge(array_diff($sets[4], [7]), [0])));
         }
-        $sets['dom'] = $f[2] !== '*';
-        $sets['dow'] = $f[4] !== '*';
+        // wie cron: ein Feld, das mit "*" beginnt (auch "*/2"), gilt für die Tag-ODER-Regel als unbeschränkt
+        $sets['dom'] = !str_starts_with($f[2], '*');
+        $sets['dow'] = !str_starts_with($f[4], '*');
         return $sets;
     }
 

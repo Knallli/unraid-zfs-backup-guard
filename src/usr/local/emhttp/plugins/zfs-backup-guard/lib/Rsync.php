@@ -25,13 +25,34 @@ final class Rsync
     {
         self::assertTargetMappings($plan);
         $base = self::base($job);
+        $conflict = Paths::jobTargetConflict($job, JobStore::all());
+        if ($conflict !== null) {
+            throw new UserError($conflict);
+        }
         $ssh = $job['target']['ssh'] ?? null;
         $owner = self::owner($job);
+        if ($ssh === null) {
+            // vor jedem Zugriff aufs Ziel: auch /mnt/user/<share>/… gegen den realen Pool-/Disk-Pfad der Quelle
+            foreach ($plan['items'] as $item) {
+                $source = Zfs::dataset($item['name']);
+                if ($source['path'] !== null) {
+                    $sourcePath = realpath($source['path']) ?: $source['path'];
+                    if (Paths::overlap($base, $sourcePath)) {
+                        throw new UserError("Quelle {$item['name']} ($sourcePath) und Ziel $base überlappen sich (auch über /mnt/user-Shares geprüft)");
+                    }
+                }
+            }
+        }
         $probe = self::remote($job, '
-base=$1; expected=$2; adopt=$3; probe=$base
+base=$1; expected=$2; adopt=$3; mode=$4; probe=$base
 while [ ! -e "$probe" ] && [ ! -L "$probe" ]; do probe=$(dirname -- "$probe"); done
 [ -d "$probe" ] && [ -w "$probe" ] || { echo "Ziel nicht beschreibbar" >&2; exit 1; }
 [ "$(realpath -m -- "$base")" = "$base" ] || { echo "Ziel enthält Symlink" >&2; exit 1; }
+if [ "$mode" = mirror ] && [ -d "$base" ]; then
+ find "$base" -xdev -mindepth 2 -maxdepth 4 -name .zbg-target.json 2>/dev/null | while IFS= read -r marker; do
+  if [ -L "$marker" ] || [ "$(cat -- "$marker" 2>/dev/null)" != "$expected" ]; then printf "ZBG-FOREIGN:%s\n" "${marker#"$base"/}"; fi
+ done || true
+fi
 mount=$(findmnt -n -o TARGET -T "$probe")
 [ -n "$mount" ] && [ "$mount" != / ] || { echo "Ziel nicht gemountet" >&2; exit 1; }
 fstype=$(findmnt -n -o FSTYPE -T "$probe")
@@ -43,23 +64,19 @@ elif [ "$adopt" != yes ] && [ -d "$base" ] && [ -n "$(find "$base" -mindepth 1 -
 fi
 printf "%s\\n%s\\n" "$probe" "$mount"
 df -B1 --output=avail -- "$probe"
-', [$base, $owner, $job['target']['mode'] === 'mirror' && !empty($job['target']['adoptExisting']) ? 'yes' : 'no']);
-        $rows = explode("\n", trim($probe));
+', [$base, $owner, $job['target']['mode'] === 'mirror' && !empty($job['target']['adoptExisting']) ? 'yes' : 'no', $job['target']['mode']]);
+        $rows = [];
+        foreach (explode("\n", trim($probe)) as $row) {
+            if (!str_starts_with($row, 'ZBG-FOREIGN:')) {
+                $rows[] = $row;
+            } elseif (!self::mirroredMarker($plan, substr($row, 12))) {
+                throw new UserError('Im Ziel liegt unter ./' . dirname(substr($row, 12)) . ' das Ziel eines anderen Jobs (.zbg-target.json); der Spiegel würde es per --delete löschen');
+            }
+        }
         $existing = $rows[0] ?? '';
         $mount = $rows[1] ?? '';
         $free = (int)trim($rows[count($rows) - 1] ?? '0');
         if ($ssh === null) {
-            foreach ($plan['items'] as $item) {
-                $source = Zfs::dataset($item['name']);
-                if ($source['path'] !== null) {
-                    $sourcePath = realpath($source['path']) ?: $source['path'];
-                    foreach (Paths::aliases($base) as $alias) {
-                        if (Paths::within($sourcePath, $alias) || Paths::within($alias, $sourcePath)) {
-                            throw new UserError('Quelle und Ziel dürfen sich nicht überlappen');
-                        }
-                    }
-                }
-            }
             $targetMount = Paths::mountFor($existing);
             if (($targetMount['type'] ?? '') === 'zfs') {
                 $pool = Zfs::pool(explode('/', $targetMount['device'])[0]);
@@ -92,6 +109,24 @@ df -B1 --output=avail -- "$probe"
             throw new UserError('Zu wenig Zielplatz: benötigt ' . Paths::human($estimated) . ', frei ' . Paths::human($free));
         }
         return ['estimatedBytes' => $estimated, 'free' => $free, 'mountpoint' => $mount, 'previous' => $previous, 'datasets' => $datasets];
+    }
+
+    /** Eine fremde .zbg-target.json im Ziel ist nur zulässig, wenn sie als normale Datei aus der Quelle gespiegelt wurde. */
+    private static function mirroredMarker(array $plan, string $rel): bool
+    {
+        $best = null;
+        foreach ($plan['items'] as $item) {
+            $t = $item['action'] === 'copy' ? (string)$item['targetRel'] : null;
+            if ($t !== null && ($t === '' || str_starts_with($rel, $t . '/')) && ($best === null || strlen($t) > strlen((string)$best['targetRel']))) {
+                $best = $item;
+            }
+        }
+        if ($best === null || empty($best['path'])) {
+            return false;
+        }
+        $t = (string)$best['targetRel'];
+        $source = rtrim($best['path'], '/') . '/' . ($t === '' ? $rel : substr($rel, strlen($t) + 1));
+        return is_file($source) && !is_link($source);
     }
 
     private static function join(string $root, ?string $relative): string
@@ -179,7 +214,7 @@ df -B1 --output=avail -- "$probe"
             $pattern = strtr(rtrim($path, '/'), ['\\' => '\\\\', '[' => '\\[', ']' => '\\]', '*' => '\\*', '?' => '\\?']) . '/***';
             array_push($cmd, '--filter=P ' . $pattern, '--filter=- ' . $pattern);
         }
-        foreach (['.zfs', '.zbg-target.json', '.zbg-version.json', '.zbg-system', '.zbg-owner-*', '.zbg-latest-*'] as $reserved) {
+        foreach (['.zfs', '.zbg-target.json', '.zbg-version.json', '.zbg-system', '.zbg-stage.json', '.zbg-owner-*', '.zbg-latest-*'] as $reserved) {
             array_push($cmd, '--filter=P /' . $reserved, '--filter=- /' . $reserved);
         }
         if ($previous !== null && !$checksum) {
@@ -197,12 +232,18 @@ df -B1 --output=avail -- "$probe"
         if ($ssh === null) {
             return $target;
         }
+        return self::sshRemote($ssh, $cmd) . $target;
+    }
+
+    /** Hängt `-e <ssh>` an ein rsync-Kommando und liefert das Adresspräfix user@host: (IPv6 in Klammern). */
+    public static function sshRemote(array $ssh, array &$cmd): string
+    {
         array_push($cmd, '-e', Remote::quote(Remote::ssh($ssh)));
-        $host = $ssh['host'];
+        $host = (string)$ssh['host'];
         if (str_contains($host, ':') && $host[0] !== '[') {
             $host = '[' . $host . ']';
         }
-        return ($ssh['user'] ?? 'root') . '@' . $host . ':' . $target;
+        return ($ssh['user'] ?? 'root') . '@' . $host . ':';
     }
 
     /** Systemdisk-Metadaten lokal erfassen und nach <Ziel>/.zbg-system/ übertragen. */
@@ -261,19 +302,7 @@ df -B1 --output=avail -- "$probe"
         $time = time();
         $name = date('Y-m-d_His', $time);
         $destination = $versioned ? $base . '/.zbg-incomplete-' . $name . '-' . bin2hex(random_bytes(4)) : $base;
-        self::remote($job, '
-base=$1; owner=$2; target=$3; adopt=$4
-[ "$(realpath -m -- "$base")" = "$base" ] || exit 1
-mkdir -p -- "$base"
-if [ -e "$base/.zbg-target.json" ] || [ -L "$base/.zbg-target.json" ]; then
- [ ! -L "$base/.zbg-target.json" ] && [ "$(cat -- "$base/.zbg-target.json")" = "$owner" ] || { echo "Fremde Ziel-Eigentümerschaft" >&2; exit 1; }
-else
- [ "$adopt" = yes ] || [ -z "$(find "$base" -mindepth 1 -maxdepth 1 -print -quit)" ] || exit 1
- tmp=$(mktemp "$base/.zbg-owner-XXXXXXXX"); printf "%s\\n" "$owner" > "$tmp"
- if ! ln -T -- "$tmp" "$base/.zbg-target.json"; then rm -f -- "$tmp"; [ ! -L "$base/.zbg-target.json" ] && [ "$(cat -- "$base/.zbg-target.json")" = "$owner" ] || exit 1; else rm -f -- "$tmp"; fi
-fi
-if [ "$target" != "$base" ]; then mkdir -- "$target"; fi
-', [$base, self::owner($job), $destination, !$versioned && !empty($job['target']['adoptExisting']) ? 'yes' : 'no']);
+        self::prepare($job, $base, $destination, !$versioned && !empty($job['target']['adoptExisting']), $log);
         $result = ['bytes' => 0, 'files' => 0, 'datasets' => [], 'verification' => ['checked' => $verify, 'mismatches' => 0], 'version' => null];
         foreach ($plan['items'] as $item) {
             if ($cancel !== null && $cancel()) {
@@ -285,7 +314,7 @@ if [ "$target" != "$base" ]; then mkdir -- "$target"; fi
                 continue;
             }
             $target = self::join($destination, $item['targetRel']);
-            self::remote($job, 'root=$1; target=$2; [ "$(realpath -m -- "$target")" = "$target" ] || { echo "Ziel-Symlink verweigert" >&2; exit 1; }; mkdir -p -- "$target"; [ "$(realpath -- "$target")" = "$target" ]', [$destination, $target]);
+            self::remote($job, 'root=$1; target=$2; [ "$(realpath -m -- "$target")" = "$target" ] || { echo "Ziel-Symlink verweigert" >&2; exit 1; }; mkdir -p -- "$target"; [ "$(realpath -- "$target")" = "$target" ] || { echo "Dataset-Zielordner ist nicht kanonisch (Symlink?): $target" >&2; exit 1; }', [$destination, $target]);
             $source = Zfs::snapshotDir($item['name'], $snapshot) . '/';
             $log('Dataset: ' . $item['name']);
             if (!$versioned && count(array_diff(scandir($source) ?: [], ['.', '..'])) === 0) {
@@ -331,14 +360,46 @@ if [ "$target" != "$base" ]; then mkdir -- "$target"; fi
             }
         }
         if ($versioned) {
-            if (empty($job['target']['ssh'])) {
-                Versions::complete($job, $destination, $name, $time);
-            } else {
-                self::completeRemote($job, $destination, $name, $time);
-            }
-            $result['version'] = $name;
+            $result['version'] = empty($job['target']['ssh'])
+                ? basename(Versions::complete($job, $destination, $name, $time))
+                : self::completeRemote($job, $destination, $name, $time);
         }
         return $result;
+    }
+
+    /** Ziel übernehmen bzw. prüfen, eigene liegengebliebene Staging-Ordner entfernen und neuen anlegen. */
+    private static function prepare(array $job, string $base, string $destination, bool $adopt, callable $log): void
+    {
+        $out = self::remote($job, '
+base=$1; owner=$2; target=$3; adopt=$4
+[ "$(realpath -m -- "$base")" = "$base" ] || { echo "Ziel enthält einen Symlink: $base" >&2; exit 1; }
+mkdir -p -- "$base"
+if [ -e "$base/.zbg-target.json" ] || [ -L "$base/.zbg-target.json" ]; then
+ [ ! -L "$base/.zbg-target.json" ] && [ "$(cat -- "$base/.zbg-target.json")" = "$owner" ] || { echo "Fremde Ziel-Eigentümerschaft" >&2; exit 1; }
+else
+ [ "$adopt" = yes ] || [ -z "$(find "$base" -mindepth 1 -maxdepth 1 -print -quit)" ] || { echo "Nichtleeres Ziel ohne eigene Eigentümerschaft (.zbg-target.json fehlt); neues Ziel wählen" >&2; exit 1; }
+ tmp=$(mktemp "$base/.zbg-owner-XXXXXXXX"); printf "%s\\n" "$owner" > "$tmp"
+ if ! ln -T -- "$tmp" "$base/.zbg-target.json"; then
+  rm -f -- "$tmp"
+  [ ! -L "$base/.zbg-target.json" ] && [ "$(cat -- "$base/.zbg-target.json")" = "$owner" ] || { echo "Eigentümer-Markierung .zbg-target.json konnte nicht angelegt werden (Hardlink fehlgeschlagen)" >&2; exit 1; }
+ else rm -f -- "$tmp"; fi
+fi
+if [ "$target" != "$base" ]; then
+ for stale in "$base"/.zbg-incomplete-*; do
+  [ -d "$stale" ] && [ ! -L "$stale" ] && [ -f "$stale/.zbg-stage.json" ] && [ ! -L "$stale/.zbg-stage.json" ] || continue
+  [ "$(cat -- "$stale/.zbg-stage.json")" = "$owner" ] || continue
+  echo "Entferne abgebrochene Version ${stale##*/}"
+  rm -rf --one-file-system -- "$stale"
+ done
+ mkdir -- "$target" || { echo "Staging-Ordner existiert bereits: $target" >&2; exit 1; }
+ printf "%s\\n" "$owner" > "$target/.zbg-stage.json"
+fi
+', [$base, self::owner($job), $destination, $adopt ? 'yes' : 'no'], 0);
+        foreach (explode("\n", trim($out)) as $line) {
+            if ($line !== '') {
+                $log($line);
+            }
+        }
     }
 
     public static function versions(array $job): array
@@ -347,7 +408,7 @@ if [ "$target" != "$base" ]; then mkdir -- "$target"; fi
             return Versions::list($job);
         }
         $base = self::base($job);
-        $out = self::remote($job, 'base=$1; [ -d "$base" ] || exit 0; [ "$(realpath -- "$base")" = "$base" ]; for dir in "$base"/*; do [ -d "$dir" ] && [ ! -L "$dir" ] && [ -f "$dir/.zbg-version.json" ] && [ ! -L "$dir/.zbg-version.json" ] || continue; printf "%s\\t" "${dir##*/}"; cat -- "$dir/.zbg-version.json"; printf "\\n"; done', [$base]);
+        $out = self::remote($job, 'base=$1; [ -d "$base" ] || exit 0; [ "$(realpath -- "$base")" = "$base" ] || { echo "Versionsziel enthält einen Symlink: $base" >&2; exit 1; }; for dir in "$base"/*; do [ -d "$dir" ] && [ ! -L "$dir" ] && [ -f "$dir/.zbg-version.json" ] && [ ! -L "$dir/.zbg-version.json" ] || continue; printf "%s\\t" "${dir##*/}"; cat -- "$dir/.zbg-version.json"; printf "\\n"; done', [$base]);
         $entries = [];
         foreach (explode("\n", trim($out)) as $line) {
             $parts = explode("\t", $line, 2);
@@ -359,11 +420,12 @@ if [ "$target" != "$base" ]; then mkdir -- "$target"; fi
                 $entries[] = ['name' => $parts[0], 'time' => $manifest['time'], 'path' => $base . '/' . $parts[0]];
             }
         }
-        usort($entries, static fn($a, $b) => $b['time'] <=> $a['time'] ?: strcmp($b['name'], $a['name']));
+        usort($entries, static fn($a, $b) => $b['time'] <=> $a['time'] ?: strnatcmp($b['name'], $a['name']));
         return $entries;
     }
 
-    private static function completeRemote(array $job, string $stage, string $name, int $time): void
+    /** Schließt die Remote-Version ab; bei Namenskollision (z. B. Zeitumstellung) mit Suffix -2, -3, … */
+    private static function completeRemote(array $job, string $stage, string $name, int $time): string
     {
         $base = self::base($job);
         $entries = self::versions($job);
@@ -371,8 +433,22 @@ if [ "$target" != "$base" ]; then mkdir -- "$target"; fi
         if ($latest !== '' && !in_array($latest, array_column($entries, 'name'), true)) {
             throw new UserError('Remote latest ist kein eigener Versionszeiger');
         }
-        $manifest = json_encode(['job' => $job['id'], 'name' => $name, 'time' => $time, 'complete' => true], JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR);
-        self::remote($job, 'base=$1; stage=$2; name=$3; manifest=$4; [ ! -e "$base/$name" ] && [ ! -L "$base/$name" ]; tmp="$stage/.zbg-version-$$"; printf "%s\\n" "$manifest" > "$tmp"; mv -T -- "$tmp" "$stage/.zbg-version.json"; mv -T -- "$stage" "$base/$name"; link="$base/.zbg-latest-$$"; ln -s -- "$name" "$link"; mv -Tf -- "$link" "$base/latest"', [$base, $stage, $name, $manifest]);
+        $manifest = explode('@@ZBG-NAME@@', json_encode(['job' => $job['id'], 'name' => '@@ZBG-NAME@@', 'time' => $time, 'complete' => true], JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR), 2);
+        $final = trim(self::remote($job, '
+base=$1; stage=$2; name=$3; head=$4; tail=$5; final=$name; n=1
+while [ -e "$base/$final" ] || [ -L "$base/$final" ]; do
+ n=$((n + 1)); [ "$n" -le 99 ] || { echo "Version $name existiert bereits (auch mit Suffix)" >&2; exit 1; }
+ final=$name-$n
+done
+rm -f -- "$stage/.zbg-stage.json"
+tmp="$stage/.zbg-version-$$"; printf "%s%s%s\\n" "$head" "$final" "$tail" > "$tmp"; mv -T -- "$tmp" "$stage/.zbg-version.json"
+mv -T -- "$stage" "$base/$final" || { echo "Version $final konnte nicht abgeschlossen werden" >&2; exit 1; }
+link="$base/.zbg-latest-$$"; ln -s -- "$final" "$link"; mv -Tf -- "$link" "$base/latest"
+printf "%s\\n" "$final"', [$base, $stage, $name, $manifest[0], $manifest[1]]));
+        if (!Versions::validName($final) || !str_starts_with($final, $name)) {
+            throw new \RuntimeException('Remote-Versionsabschluss lieferte ungültigen Namen: ' . $final);
+        }
+        return $final;
     }
 
     public static function prune(array $job, callable $log): void
@@ -391,7 +467,7 @@ if [ "$target" != "$base" ]; then mkdir -- "$target"; fi
             $entry = array_values(array_filter($entries, static fn($entry) => $entry['name'] === $name))[0];
             $expected = json_encode(['job' => $job['id'], 'name' => $name, 'time' => $entry['time'], 'complete' => true], JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR);
             $log("Remote Versions-Retention: $name");
-            self::remote($job, 'path=$1; expected=$2; [ -d "$path" ] && [ ! -L "$path" ] && [ ! -L "$path/.zbg-version.json" ]; [ "$(cat -- "$path/.zbg-version.json")" = "$expected" ]; rm -rf --one-file-system -- "$path"; [ ! -e "$path" ]', [$entry['path'], $expected], 0);
+            self::remote($job, 'path=$1; expected=$2; [ -d "$path" ] && [ ! -L "$path" ] && [ ! -L "$path/.zbg-version.json" ] && [ "$(cat -- "$path/.zbg-version.json")" = "$expected" ] || { echo "Version $path ist nicht eindeutig eigene Version, nicht gelöscht" >&2; exit 1; }; rm -rf --one-file-system -- "$path"; [ ! -e "$path" ] || { echo "Version $path konnte nicht vollständig gelöscht werden" >&2; exit 1; }', [$entry['path'], $expected], 0);
         }
     }
 }

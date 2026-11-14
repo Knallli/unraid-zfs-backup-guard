@@ -69,6 +69,27 @@ final class Remote
             }
             array_push($args, '-o', 'UserKnownHostsFile=' . $knownHosts);
         }
+        // Multiplexing: inspect/finish/prune öffnen sonst Dutzende Verbindungen; Hostschlüsselprüfung bleibt beim Master
+        $control = self::controlPath([$user, $host, $port, $key, $knownHosts]);
+        if ($control !== null) {
+            array_push($args, '-o', 'ControlMaster=auto', '-o', 'ControlPath=' . $control, '-o', 'ControlPersist=60');
+        }
         return $args;
+    }
+
+    /** Socket je Ziel und Schlüssel (kein Teilen zwischen verschiedenen Identitäten); null = ohne Multiplexing. */
+    public static function controlPath(array $identity): ?string
+    {
+        $dir = RunState::dir() . '/ssh';
+        if (!is_dir($dir) && !@mkdir($dir, 0700, true) && !is_dir($dir)) {
+            return null;
+        }
+        if (is_link($dir) || (function_exists('posix_geteuid') && @fileowner($dir) !== posix_geteuid())
+            || ((@fileperms($dir) & 0077) !== 0 && !@chmod($dir, 0700))) {
+            return null;
+        }
+        $path = $dir . '/' . substr(hash('sha256', implode("\0", $identity)), 0, 16);
+        // ssh hängt beim Anlegen ein Suffix an, Unix-Sockets erlauben ~108 Zeichen; % wäre ein ssh-Token
+        return strlen($path) <= 80 && !preg_match('~[\s%"\']~', $path) ? $path : null;
     }
 }

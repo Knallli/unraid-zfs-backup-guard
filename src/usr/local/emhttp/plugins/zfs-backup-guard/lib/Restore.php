@@ -73,11 +73,15 @@ final class Restore
             throw new UserError('Ungültiger Zielpfad');
         }
         if ($custom === null) {
-            $ds = Zfs::dataset($version ? $job['source']['dataset'] : self::parameter($params, 'dataset'));
-            if (empty($ds['path'])) {
-                throw new UserError('Original nicht gemountet – bitte einen neuen Zielpfad unter /mnt angeben');
+            if ($version) {
+                $original = self::originalPath($job, $base);
+            } else {
+                $ds = Zfs::dataset(self::parameter($params, 'dataset'));
+                if (empty($ds['path'])) {
+                    throw new UserError('Original nicht gemountet – bitte einen neuen Zielpfad unter /mnt angeben');
+                }
+                $original = rtrim((string)$ds['path'], '/') . ($base === '' ? '' : '/' . $base);
             }
-            $original = rtrim((string)$ds['path'], '/') . ($base === '' ? '' : '/' . $base);
             $custom = $original . '/restore-' . date('Ymd-His') . '-' . bin2hex(random_bytes(4));
         }
         $target = self::newTarget($custom);
@@ -86,15 +90,17 @@ final class Restore
         }
         $targets = [];
         $count = 0;
+        $bytes = 0;
         $selection = array_values($minimal);
         foreach ($minimal as $rel => $source) {
             $rel = (string)$rel;
             $suffix = $base === '' ? $rel : substr($rel, strlen($base) + 1);
             $destination = $target . ($suffix === '' ? '' : '/' . $suffix);
-            self::inspect($root, $source, $destination, $target, $selection, $count, $version);
+            self::inspect($root, $source, $destination, $target, $selection, $count, $version, $bytes);
             $targets[] = $destination;
         }
         // All sources, links and target ancestors are checked before creating anything.
+        self::assertStorage($target, $bytes);
         self::createDirectory(dirname($target));
         if (!@mkdir($target, 0700)) {
             throw new UserError('Ziel konnte nicht exklusiv angelegt werden (existiert es bereits?)');
@@ -162,27 +168,17 @@ final class Restore
             throw new UserError('Ungültiger Zielpfad');
         }
         if ($custom === null) {
-            $original = Zfs::dataset($job['source']['dataset']);
-            if (empty($original['path'])) {
-                throw new UserError('Original nicht gemountet – bitte einen neuen Zielpfad unter /mnt angeben');
-            }
-            $custom = rtrim($original['path'], '/') . ($base === '' ? '' : '/' . $base)
-                . '/restore-' . date('Ymd-His') . '-' . bin2hex(random_bytes(4));
+            $custom = self::originalPath($job, $base) . '/restore-' . date('Ymd-His') . '-' . bin2hex(random_bytes(4));
         }
         $target = self::newTarget($custom);
         $count = self::inspectRemote($job, $root, $sourceBase, $minimal);
+        self::assertStorage($target);
         self::createDirectory(dirname($target));
         if (!@mkdir($target, 0700) || realpath($target) !== $target || is_link($target)) {
             throw new UserError('Ziel konnte nicht exklusiv und sicher angelegt werden');
         }
-        $ssh = $job['target']['ssh'];
-        $host = $ssh['host'];
-        if (str_contains($host, ':') && $host[0] !== '[') {
-            $host = '[' . $host . ']';
-        }
-        $remote = ($ssh['user'] ?? 'root') . '@' . $host . ':';
-        $cmd = ['rsync', '-aHAX', '--numeric-ids', '--ignore-existing', '--relative',
-            '--safe-links', '--protect-args', '-e', Remote::quote(Remote::ssh($ssh))];
+        $cmd = ['rsync', '-aHAX', '--numeric-ids', '--ignore-existing', '--relative', '--safe-links', '--protect-args'];
+        $remote = Rsync::sshRemote($job['target']['ssh'], $cmd);
         if ($base === '') {
             array_push($cmd, '--exclude=/.zfs', '--exclude=/.zbg-version.json');
         }
@@ -512,6 +508,52 @@ SH;
         return $resolved;
     }
 
+    /**
+     * Ursprungsort eines Versionspfads: über den Job-Plan auf das zuständige (Kind-)Dataset abbilden,
+     * damit .datasets/<rel>/… im echten Mountpunkt des Kindes landet und nicht unter <Wurzel>/.datasets.
+     */
+    private static function originalPath(array $job, string $base): string
+    {
+        $plan = Zfs::plan($job['source']['dataset'], (bool)($job['source']['recursive'] ?? true), (array)($job['source']['exclude'] ?? []));
+        $best = null;
+        foreach ($plan['items'] as $item) {
+            $t = $item['action'] === 'copy' ? (string)$item['targetRel'] : null;
+            if ($t !== null && ($t === '' || $base === $t || str_starts_with($base, $t . '/'))
+                && ($best === null || strlen($t) > strlen((string)$best['targetRel']))) {
+                $best = $item;
+            }
+        }
+        if ($best === null || empty($best['path'])) {
+            throw new UserError('Original nicht gemountet – bitte einen neuen Zielpfad unter /mnt angeben');
+        }
+        $t = (string)$best['targetRel'];
+        $rest = $t === '' ? $base : ltrim(substr($base, strlen($t)), '/');
+        return rtrim((string)$best['path'], '/') . ($rest === '' ? '' : '/' . $rest);
+    }
+
+    /** Nie in den RAM (rootfs/tmpfs) schreiben: nächster vorhandener Vorfahr muss auf einem echten Mount liegen. */
+    private static function assertStorage(string $target, ?int $bytes = null): void
+    {
+        $probe = dirname($target);
+        while ($probe !== '/' && @lstat($probe) === false) {
+            $probe = dirname($probe);
+        }
+        if ($probe === '/' || $probe === '/mnt') {
+            $top = implode('/', array_slice(explode('/', $target), 0, 3));
+            throw new UserError("$top existiert nicht – Array gestartet bzw. Pool/Disk vorhanden? Ordner direkt unter /mnt werden nie angelegt");
+        }
+        $real = realpath($probe);
+        $mount = $real === false ? null : Paths::mountFor($real);
+        if ($mount === null || in_array($mount['mountpoint'], ['/', '/mnt'], true)
+            || in_array($mount['type'], ['rootfs', 'tmpfs', 'ramfs'], true)) {
+            throw new UserError("Ziel $probe liegt nicht auf einem gemounteten Datenträger (nur RAM) – Array gestartet?");
+        }
+        $free = @disk_free_space($real);
+        if ($bytes !== null && $free !== false && $free < $bytes) {
+            throw new UserError('Zu wenig Platz am Wiederherstellungsziel: benötigt ' . Paths::human($bytes) . ', frei ' . Paths::human((int)$free));
+        }
+    }
+
     private static function createDirectory(string $path): void
     {
         if (is_link($path)) {
@@ -533,13 +575,14 @@ SH;
     }
 
     private static function inspect(string $root, string $source, string $destination, string $target,
-        array $selected, int &$count, bool $version): void
+        array $selected, int &$count, bool $version, int &$bytes = 0): void
     {
         $st = @lstat($source);
         if ($st === false) {
             throw new UserError('Quelldatei kann nicht gelesen werden: ' . $source);
         }
         $count++;
+        $bytes += (int)$st['size'];
         $type = $st['mode'] & 0170000;
         if ($type === 0120000) {
             $link = @readlink($source);
@@ -572,7 +615,7 @@ SH;
                 if ($source === $root && $name === '.zfs') {
                     continue;
                 }
-                self::inspect($root, $source . '/' . $name, $destination . '/' . $name, $target, $selected, $count, $version);
+                self::inspect($root, $source . '/' . $name, $destination . '/' . $name, $target, $selected, $count, $version, $bytes);
             }
         } finally {
             closedir($dir);

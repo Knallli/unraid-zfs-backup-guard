@@ -11,7 +11,7 @@ final class Api
             'overview' => self::overview(),
             'datasets' => ['pools' => Zfs::pools(), 'datasets' => Zfs::datasets()],
             'snapshots' => Zfs::snapshots(self::optStr($p, 'dataset'), (bool)($p['recursive'] ?? false)),
-            'jobs.save' => JobStore::save((array)($p['job'] ?? []), self::optStr($p, 'originalId')),
+            'jobs.save' => JobStore::save((array)($p['job'] ?? []), self::optStr($p, 'originalId'), self::optStr($p, 'revision')),
             'jobs.delete' => JobStore::delete(self::str($p, 'id')) ?? true,
             'jobs.toggle' => JobStore::setEnabled(self::str($p, 'id'), (bool)($p['enabled'] ?? false)),
             'target.check' => Paths::checkTarget(self::str($p, 'path'), self::optStr($p, 'source')),
@@ -22,8 +22,8 @@ final class Api
             'history' => ($id = self::optStr($p, 'job')) ? History::forJob($id, 500) : History::all(500),
             'migration.scan' => UserScripts::scan(),
             'migration.import' => self::importScript(self::str($p, 'script')),
-            'settings.get' => JobStore::settings(),
-            'settings.save' => JobStore::saveSettings((array)($p['settings'] ?? [])),
+            'settings.get' => self::settings(JobStore::settings()),
+            'settings.save' => self::settings(JobStore::saveSettings((array)($p['settings'] ?? []))),
             'cron.next' => self::cronNext(self::str($p, 'expr')),
             'run.start' => Runner::start(self::str($p, 'id'), (bool)($p['dryRun'] ?? false), (bool)($p['verify'] ?? false)),
             'run.cancel' => Runner::cancel(self::str($p, 'id')),
@@ -55,6 +55,7 @@ final class Api
             $runs = History::forJob($job['id'], 30);
             $jobs[] = [
                 'job' => $job,
+                'revision' => JobStore::revision($job),
                 'snapshotCount' => $ownCount[$job['id']] ?? 0,
                 'sourceBytes' => $used[$job['source']['dataset']] ?? 0,
                 'status' => History::status($job, $runs),
@@ -82,6 +83,13 @@ final class Api
             'pools' => Zfs::pools(),
             'migration' => array_map(static fn($s) => ['script' => $s['script'], 'jobs' => count($s['proposals'])], $migration),
         ];
+    }
+
+    /** Zeigt zusätzlich das tatsächlich genutzte Verzeichnis (RAM-Ausweichpfad, wenn das konfigurierte fehlt). */
+    private static function settings(array $s): array
+    {
+        $active = dirname(History::dir());
+        return $s + ['activeLogDir' => $active, 'logFallback' => $active !== rtrim((string)$s['logDir'], '/')];
     }
 
     private static function importScript(string $name): array

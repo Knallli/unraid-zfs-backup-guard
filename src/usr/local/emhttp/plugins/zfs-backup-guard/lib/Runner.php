@@ -5,6 +5,13 @@ namespace ZBG;
 
 final class Runner
 {
+    private const STOPPING = 'Array wird gestoppt: keine neuen Backup-Läufe bis zum nächsten Array-Start';
+    /** Höchstwartezeit auf die globale I/O-Sperre bzw. Laufzeit eines Hooks. */
+    public const IO_LOCK_TIMEOUT = 6 * 3600;
+    public const HOOK_TIMEOUT = 3600;
+    /** Fortschrittszeilen (rsync --info=progress2) höchstens alle 10 s ins Lauf-Log. */
+    private const PROGRESS_INTERVAL = 10.0;
+
     private static function runId(): string
     {
         return date('Ymd-His') . '-' . bin2hex(random_bytes(4));
@@ -22,6 +29,9 @@ final class Runner
             $job = JobStore::get($id);
             if (RunState::active($id)) {
                 throw new UserError('Job läuft bereits');
+            }
+            if (RunState::stopping()) {
+                throw new UserError(self::STOPPING);
             }
             self::recoverStale($id, RunState::read($id));
             $run = self::runId();
@@ -79,7 +89,14 @@ final class Runner
     {
         $id = (string)($job['id'] ?? '');
         $inherited = getenv('ZBG_RUN_ID') ?: '';
-        $lock = RunState::lockJob($id, $inherited === '');
+        try {
+            $lock = RunState::lockJob($id, $inherited === '');
+        } catch (UserError $e) {
+            if ($scheduled && str_starts_with($e->getMessage(), 'Job läuft bereits')) {
+                return self::skip($id, 'Job läuft bereits');
+            }
+            throw $e;
+        }
         $ioLock = null;
         $finished = false;
         $cancelled = false;
@@ -100,7 +117,16 @@ final class Runner
                 $state = $old;
             } else {
                 if (RunState::active($id)) {
+                    if ($scheduled) {
+                        return self::skip($id, 'Job läuft bereits');
+                    }
                     throw new UserError('Job läuft bereits');
+                }
+                if (RunState::stopping()) {
+                    if ($scheduled) {
+                        return self::skip($id, 'Array wird gestoppt');
+                    }
+                    throw new UserError(self::STOPPING);
                 }
                 self::recoverStale($id, $old);
                 $state = self::initial($id, self::runId(), $dryRun);
@@ -117,11 +143,14 @@ final class Runner
             }
             RunState::write($id, $state);
             $lastWrite = 0.0;
-            $log = static function (string $line) use (&$state, $id, $logHandle, &$lastWrite): void {
+            [$write, $flushProgress] = self::throttled(static function (string $line) use ($logHandle): void {
                 if (fwrite($logHandle, '[' . date('c') . '] ' . $line . "\n") === false) {
                     throw new \RuntimeException('Lauf-Log kann nicht geschrieben werden');
                 }
                 fflush($logHandle);
+            }, self::PROGRESS_INTERVAL);
+            $log = static function (string $line) use (&$state, $id, &$lastWrite, $write): void {
+                $write($line);
                 if (str_starts_with($line, 'Dataset: ')) {
                     $state['dataset'] = substr($line, 9);
                     $state['progress'] = [];
@@ -171,7 +200,7 @@ final class Runner
                     pcntl_signal($signal, static function () use (&$cancelled): void { $cancelled = true; });
                 }
             }
-            register_shutdown_function(static function () use (&$finished, &$state, $id, $journal): void {
+            register_shutdown_function(static function () use (&$finished, &$state, $id, $journal, $job): void {
                 if ($finished || !$state || ($state['state'] ?? '') !== 'running') {
                     return;
                 }
@@ -185,6 +214,7 @@ final class Runner
                     $state['error'] = 'Worker unerwartet beendet: ' . (error_get_last()['message'] ?? 'Prozessende');
                     $state['end'] = time();
                     $state['duration'] = $state['end'] - $state['start'];
+                    self::notify($job, $state, $recoveryLog);
                     RunState::write($id, $state);
                     History::append($id, $state);
                 } catch (\Throwable $e) {
@@ -194,17 +224,31 @@ final class Runner
             try {
                 if (!empty(JobStore::settings()['globalLock'])) {
                     $step('waiting-io-lock');
-                    $ioLock = fopen(RunState::dir() . '/global-io.lock', 'c');
+                    $ioPath = RunState::dir() . '/global-io.lock';
+                    $ioLock = fopen($ioPath, 'ce');
                     if ($ioLock === false) {
                         throw new \RuntimeException('Globale I/O-Sperre kann nicht geöffnet werden');
                     }
+                    $waitSince = time();
+                    $waitLogged = false;
                     while (!flock($ioLock, LOCK_EX | LOCK_NB, $wouldBlock)) {
                         if (!$wouldBlock) {
                             throw new \RuntimeException('Globale I/O-Sperre fehlgeschlagen');
                         }
+                        if (!$waitLogged) {
+                            $holder = trim((string)@file_get_contents($ioPath));
+                            $log('Warte auf globale I/O-Sperre' . ($holder !== '' ? ' (gehalten von Job ' . $holder . ')' : '') . ', höchstens ' . intdiv(self::IO_LOCK_TIMEOUT, 3600) . ' h');
+                            $waitLogged = true;
+                        }
+                        if (time() - $waitSince > self::IO_LOCK_TIMEOUT) {
+                            throw new \RuntimeException('Globale I/O-Sperre nach ' . intdiv(self::IO_LOCK_TIMEOUT, 3600) . ' h nicht erhalten; anderer Job oder hängender Prozess hält sie: ' . (trim((string)@file_get_contents($ioPath)) ?: 'unbekannt'));
+                        }
                         $checkCancel();
                         usleep(200000);
                     }
+                    ftruncate($ioLock, 0);
+                    fwrite($ioLock, $id . "\n");
+                    fflush($ioLock);
                 }
                 $step('preflight');
                 $checkCancel();
@@ -240,7 +284,7 @@ final class Runner
                     }
                     $state['result'] = 'dryrun';
                 } else {
-                    Notify::healthcheck($job, 'start');
+                    self::ping($job, 'start', $log);
                     self::hook($job['hooks']['pre'], $log, $cancel);
                     $checkCancel();
                     $step('consistency');
@@ -300,30 +344,8 @@ final class Runner
             $state['step'] = 'finished';
             $state['end'] = time();
             $state['duration'] = $state['end'] - $state['start'];
-            if (!$dryRun) {
-                try {
-                    Notify::result($job, $state);
-                } catch (\Throwable $e) {
-                    $state['result'] = 'failed';
-                    $state['error'] = trim(($state['error'] ?? '') . '; Benachrichtigung: ' . $e->getMessage(), '; ');
-                    $log($e->getMessage());
-                }
-                try {
-                    Notify::healthcheck($job, $state['result'] === 'success' ? 'success' : 'fail');
-                } catch (\Throwable $e) {
-                    $wasSuccess = $state['result'] === 'success';
-                    $state['result'] = 'failed';
-                    $state['error'] = trim(($state['error'] ?? '') . '; Healthcheck: ' . $e->getMessage(), '; ');
-                    $log($e->getMessage());
-                    if ($wasSuccess) {
-                        try {
-                            Notify::healthcheck($job, 'fail');
-                        } catch (\Throwable $failure) {
-                            $log('Healthcheck /fail: ' . $failure->getMessage());
-                        }
-                    }
-                }
-            }
+            $flushProgress();
+            self::notify($job, $state, $log);
             $state['state'] = $state['result'] === 'dryrun' ? 'success' : $state['result'];
             RunState::write($id, $state);
             History::append($id, $state);
@@ -348,6 +370,8 @@ final class Runner
                 $state['error'] = trim($e->getMessage() . '; ' . ($state['error'] ?? ''), '; ');
                 $state['end'] = time();
                 $state['duration'] = $state['end'] - $state['start'];
+                self::notify($job, $state, $recoveryLog);
+                $state['state'] = $state['result'];
                 RunState::write($id, $state);
                 History::append($id, $state);
                 $finished = true;
@@ -382,8 +406,13 @@ final class Runner
             throw new UserError('Hook ist nicht lesbar: ' . $path);
         }
         Paths::normalizeScript($real);
+        // Hooks laufen als root: ein über SMB beschreibbares Skript wäre sonst eine Rechteausweitung.
+        $stat = @stat($real);
+        if ($stat === false || $stat['uid'] !== 0 || ($stat['mode'] & 0022) !== 0) {
+            throw new UserError('Hook wird nicht ausgeführt: ' . $real . ' muss root gehören und darf nicht für Gruppe/andere beschreibbar sein (chown root:root, chmod 755)');
+        }
         $log('Hook: ' . $real);
-        $result = Exec::stream(['bash', $real], $log, $cancel);
+        $result = Exec::stream(['bash', $real], $log, $cancel, self::HOOK_TIMEOUT);
         if ($result['code'] !== 0) {
             throw new \RuntimeException('Hook fehlgeschlagen: ' . ($result['err'] ?: $result['out']));
         }
@@ -415,20 +444,113 @@ final class Runner
                 file_put_contents($state['log'], '[' . date('c') . '] Recovery: ' . $line . "\n", FILE_APPEND | LOCK_EX);
             }
         };
-        Docker::recover($state['containers'] ?? [], $log, static function (array $entries) use (&$state, $id): void {
-            $state['containers'] = $entries;
-            RunState::write($id, $state);
-        });
+        $failure = null;
+        try {
+            Docker::recover($state['containers'] ?? [], $log, static function (array $entries) use (&$state, $id): void {
+                $state['containers'] = $entries;
+                RunState::write($id, $state);
+            });
+        } catch (\Throwable $e) {
+            $failure = $e;
+            $log('WARNUNG: ' . $e->getMessage());
+        }
+        // Auch bei fehlgeschlagener Wiederherstellung abschließen, sonst bliebe der Lauf für immer "running".
         if ($unexpected) {
             $state['state'] = $state['result'] = 'failed';
             $state['step'] = 'finished';
-            $state['error'] = 'Worker unerwartet beendet; Container wiederhergestellt';
+            $state['error'] = 'Worker unerwartet beendet; ' . ($failure === null ? 'Container wiederhergestellt' : $failure->getMessage());
             $state['end'] = time();
-            $state['duration'] = $state['end'] - $state['start'];
+            $state['duration'] = $state['end'] - (int)($state['start'] ?? $state['end']);
+            try {
+                self::notify(JobStore::get($id), $state, $log);
+            } catch (\Throwable $e) {
+                $log('WARNUNG: Benachrichtigung nicht möglich: ' . $e->getMessage());
+            }
+            $state['state'] = $state['result'];
             RunState::write($id, $state);
             History::append($id, $state);
         }
         RunState::clearCancel($id);
+        if ($failure !== null) {
+            throw $failure;
+        }
+    }
+
+    /**
+     * \r-Fortschrittsupdates (rsync --info=progress2) kämen sonst als eigene Zeilen ins Lauf-Log:
+     * höchstens eine pro Intervall; die zuletzt zurückgehaltene wird vor der nächsten normalen Zeile bzw. beim Flush geschrieben.
+     * @return array{0:callable(string):void,1:callable():void}
+     */
+    private static function throttled(callable $write, float $interval): array
+    {
+        $last = 0.0;
+        $held = null;
+        $flush = static function () use (&$held, $write): void {
+            if ($held !== null) {
+                $line = $held;
+                $held = null;
+                $write($line);
+            }
+        };
+        $filtered = static function (string $line) use (&$last, &$held, $write, $flush, $interval): void {
+            $progress = (bool)preg_match('/^\s*[\d,]+\s+\d+%\s/', $line);
+            if ($progress && microtime(true) - $last < $interval) {
+                $held = $line;
+                return;
+            }
+            if ($progress) {
+                $held = null;
+                $last = microtime(true);
+            } else {
+                $flush();
+            }
+            $write($line);
+        };
+        return [$filtered, $flush];
+    }
+
+    /** Ergebnis-Benachrichtigung und Healthcheck-Ping für einen abgeschlossenen echten Lauf (ein Weg für alle Abschlüsse). */
+    private static function notify(array $job, array &$state, callable $log): void
+    {
+        if (!empty($state['dryRun'])) {
+            return;
+        }
+        try {
+            Notify::result($job, $state);
+        } catch (\Throwable $e) {
+            $state['result'] = 'failed';
+            $state['error'] = trim(($state['error'] ?? '') . '; Benachrichtigung: ' . $e->getMessage(), '; ');
+            $log('FEHLER: Benachrichtigung: ' . $e->getMessage());
+        }
+        self::ping($job, ($state['result'] ?? '') === 'success' ? 'success' : 'fail', $log);
+    }
+
+    /** Healthcheck-Fehler sind nur Warnungen: ein nicht erreichbarer Dienst darf kein Backup verhindern oder entwerten. */
+    private static function ping(array $job, string $event, callable $log): void
+    {
+        try {
+            Notify::healthcheck($job, $event);
+        } catch (\Throwable $e) {
+            try {
+                $log('WARNUNG: Healthcheck (' . $event . ') fehlgeschlagen: ' . $e->getMessage());
+            } catch (\Throwable) {
+            }
+        }
+    }
+
+    /** Geplanter Lauf übersprungen: cron verwirft die Ausgabe, daher ins laufende Log und ins Syslog. */
+    private static function skip(string $id, string $reason): array
+    {
+        $message = 'Geplanter Lauf übersprungen: ' . $reason;
+        try {
+            $current = RunState::read($id);
+            if (($current['state'] ?? '') === 'running' && !empty($current['log']) && is_file($current['log'])) {
+                @file_put_contents($current['log'], '[' . date('c') . '] ' . $message . "\n", FILE_APPEND | LOCK_EX);
+            }
+            Exec::run(['logger', '-t', 'zfs-backup-guard', "Job $id: $message"], 10);
+        } catch (\Throwable) {
+        }
+        return ['job' => $id, 'state' => 'skipped', 'result' => 'skipped', 'reason' => $reason];
     }
 
     public static function status(?string $id = null): array
@@ -445,17 +567,23 @@ final class Runner
         }
         $state = RunState::read($id);
         if ($state && !RunState::active($id) && (($state['state'] ?? '') === 'running' || !empty($state['containers']))) {
+            // Wiederherstellungsfehler dürfen die Statusabfrage (Übersicht, Array-Stopp) nie abbrechen.
             try {
                 $lock = RunState::lockJob($id, true);
-            } catch (UserError $e) {
+            } catch (\Throwable $e) {
                 return $state;
             }
             try {
                 self::recoverStale($id, RunState::read($id));
-                $state = RunState::read($id);
+            } catch (\Throwable $e) {
+                $recoveryError = $e->getMessage();
             } finally {
                 flock($lock, LOCK_UN);
                 fclose($lock);
+            }
+            $state = RunState::read($id);
+            if (isset($recoveryError)) {
+                $state['recoveryError'] = $recoveryError;
             }
         }
         if (($state['state'] ?? '') === 'running') {
@@ -477,40 +605,86 @@ final class Runner
         return self::status($id);
     }
 
-    public static function cancelAll(): void
+    /**
+     * Array-Stopp: neue Läufe sperren, laufende abbrechen und auf Container-Wiederherstellung warten.
+     * Wirft nie (Ereignis-Skript und Plugin-Entfernung laufen mit set -e); liefert Warnungen.
+     * @return list<string>
+     */
+    public static function cancelAll(int $timeout = 180, int $containerGrace = 30): array
     {
+        $warnings = [];
+        try {
+            RunState::setStopping(true);
+        } catch (\Throwable $e) {
+            $warnings[] = $e->getMessage();
+        }
         $states = self::status();
         foreach ($states as $id => $state) {
             if (($state['state'] ?? '') === 'running') {
-                self::cancel($id);
-            }
-        }
-        $deadline = microtime(true) + 180;
-        do {
-            $pending = [];
-            foreach ($states as $id => $state) {
-                $current = self::status($id);
-                if (($current['state'] ?? '') === 'running' || !empty($current['containers'])) {
-                    $pending[] = $id;
+                try {
+                    self::cancel($id);
+                } catch (\Throwable $e) {
+                    $warnings[] = "$id: " . $e->getMessage();
                 }
             }
-            if (!$pending) {
-                return;
+        }
+        $deadline = microtime(true) + $timeout;
+        $idleSince = null;
+        while (true) {
+            $running = $containers = [];
+            foreach ($states as $id => $state) {
+                $current = self::status($id);
+                if (($current['state'] ?? '') === 'running') {
+                    $running[] = $id;
+                } elseif (!empty($current['containers'])) {
+                    $containers[$id] = $current['recoveryError'] ?? 'Container nicht wiederhergestellt';
+                }
+            }
+            if (!$running && !$containers) {
+                return $warnings;
+            }
+            $idleSince = $running ? null : ($idleSince ?? microtime(true));
+            // Nur noch nicht wiederherstellbare Container: nicht den ganzen Array-Stopp aufhalten.
+            if (microtime(true) >= $deadline || ($idleSince !== null && microtime(true) - $idleSince >= $containerGrace)) {
+                foreach ($running as $id) {
+                    $warnings[] = "$id: Lauf nach {$timeout}s noch nicht beendet";
+                }
+                foreach ($containers as $id => $error) {
+                    $warnings[] = "$id: $error";
+                }
+                return $warnings;
             }
             usleep(200000);
-        } while (microtime(true) < $deadline);
-        throw new \RuntimeException('Array-Stopp wartet auf Läufe/Container: ' . implode(', ', $pending));
+        }
+    }
+
+    /** Ereignis "started": Sperre für neue Läufe aus dem Array-Stopp aufheben. */
+    public static function arrayStarted(): void
+    {
+        RunState::setStopping(false);
     }
 
     public static function log(string $id, ?string $run = null): array
     {
-        if ($run === null) {
-            $run = self::status($id)['runId'] ?? null;
-        }
+        $state = self::status($id);
+        $run ??= $state['runId'] ?? null;
         if ($run === null) {
             return [];
         }
         $path = RunState::logPath($id, $run);
+        // Gespeicherten Pfad bevorzugen: History::dir() kann inzwischen auf /var/log ausgewichen sein (oder zurück).
+        $stored = ($state['runId'] ?? null) === $run ? ($state['log'] ?? null) : null;
+        if ($stored === null) {
+            foreach (History::forJob($id, 5000) as $record) {
+                if (($record['runId'] ?? null) === $run) {
+                    $stored = $record['log'] ?? null;
+                    break;
+                }
+            }
+        }
+        if (is_string($stored) && basename($stored) === basename($path) && basename(dirname($stored)) === 'logs' && is_file($stored)) {
+            $path = $stored;
+        }
         if (!is_file($path)) {
             return [];
         }
@@ -533,18 +707,35 @@ final class Runner
     public static function checkAge(): array
     {
         $result = [];
+        $file = RunState::dir() . '/age-notified.json';
+        $previous = json_decode((string)@file_get_contents($file), true) ?: [];
+        $current = [];
         foreach (JobStore::all() as $job) {
             $status = History::status($job, History::forJob($job['id'], 5000));
             // auch fehlgeschlagene Jobs warnen, sobald der letzte Erfolg zu alt ist; "never" ohne Erfolg nicht (neue Jobs)
             $tooOld = $status['ageSeconds'] !== null && $status['ageSeconds'] > $job['maxAgeHours'] * 3600;
-            if ($job['enabled'] && ($status['state'] === 'stale' || ($status['state'] === 'failed' && $tooOld))) {
+            $alert = !$job['enabled'] ? null : ($status['state'] === 'stale' ? 'stale' : ($status['state'] === 'failed' && $tooOld ? 'failed-old' : null));
+            // Nur beim Wechsel melden, nicht stündlich erneut; ein Fehlschlag selbst meldet bereits Notify::result.
+            $key = $alert === null ? null : $alert . ':' . ($status['lastSuccess']['runId'] ?? '');
+            if ($key !== null && ($previous[$job['id']] ?? null) !== $key) {
                 try {
                     Notify::stale($job, $status);
                 } catch (\Throwable $e) {
                     $status['notificationError'] = $e->getMessage();
+                    $key = $previous[$job['id']] ?? null;
                 }
             }
+            if ($key !== null) {
+                $current[$job['id']] = $key;
+            }
             $result[$job['id']] = $status;
+        }
+        if ($current !== $previous) {
+            try {
+                RunState::ensureDirectory(RunState::dir());
+                RunState::atomic($file, $current);
+            } catch (\Throwable) {
+            }
         }
         return $result;
     }

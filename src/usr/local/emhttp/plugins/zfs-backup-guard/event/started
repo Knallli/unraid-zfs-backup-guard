@@ -1,0 +1,3 @@
+#!/bin/sh
+# Array wieder gestartet: Sperre für neue Läufe aus dem Array-Stopp aufheben.
+exec /usr/bin/php /usr/local/emhttp/plugins/zfs-backup-guard/bin/zbg array-started

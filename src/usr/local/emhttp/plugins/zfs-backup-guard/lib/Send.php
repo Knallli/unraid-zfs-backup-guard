@@ -8,6 +8,7 @@ final class Send
 {
     private const OWNER = 'zbg:job';
     private const SOURCE = 'zbg:source';
+    private const PROGRESS_INTERVAL = 30;
 
     public static function preflight(array $job, array $plan): array
     {
@@ -49,6 +50,11 @@ final class Send
             self::cancel($cancel);
             $bytes = 0;
             $measured = false;
+            if (isset($item['abort'])) {
+                // Stream ist nie mehr fortsetzbar; Ziel gehört nachweislich diesem Job (inspect)
+                $log('Unvollständiger Empfang nicht fortsetzbar (' . $item['abort'] . '), wird verworfen: zfs receive -A ' . $item['target']);
+                self::ok($ctx['ssh'], ['zfs', 'receive', '-A', $item['target']]);
+            }
             // Finish exactly the stream described by the token before starting a newer snapshot.
             if ($item['resume'] !== null) {
                 $resume = $item['resume'];
@@ -83,7 +89,7 @@ final class Send
     {
         $ctx = self::inspect($job, $plan);
         foreach ($ctx['items'] as $item) {
-            if ($item['resume'] !== null) {
+            if ($item['resume'] !== null || isset($item['abort'])) {
                 $log('Ziel-Retention ausgelassen: unvollständiger Empfang für ' . $item['target']);
                 continue;
             }
@@ -107,8 +113,17 @@ final class Send
                 self::assertOwner($ctx['ssh'], $item['target'], $job, $item['source']);
                 $fresh = self::snapshots($ctx['ssh'], $item['target']);
                 self::findOwn($fresh, $name, (string)$job['id']);
-                self::ok($ctx['ssh'], ['zfs', 'destroy', $name]);
-                $log('Ziel-Snapshot gelöscht: ' . $name);
+                // Klone oder Holds auf dem Ziel: überspringen statt Lauf und restliche Retention abzubrechen
+                $props = self::properties($ctx['ssh'], $name, ['clones', 'userrefs']);
+                $blocker = Zfs::destroyBlocker($props['clones']['value'] ?? '', $props['userrefs']['value'] ?? '0');
+                if ($blocker === null) {
+                    $r = self::run($ctx['ssh'], ['zfs', 'destroy', $name]);
+                    if ($r['code'] !== 0 && !Zfs::destroyBusy($r['err'] . $r['out'])) {
+                        throw new \RuntimeException(sprintf('zfs destroy fehlgeschlagen (%d): %s', $r['code'], $r['err'] ?: $r['out']));
+                    }
+                    $blocker = $r['code'] !== 0 ? trim($r['err'] ?: $r['out']) : null;
+                }
+                $log($blocker === null ? 'Ziel-Snapshot gelöscht: ' . $name : 'WARNUNG: Ziel-Retention übersprungen für ' . $name . ': ' . $blocker);
             }
         }
     }
@@ -132,12 +147,10 @@ final class Send
             throw new UserError('Ziel-Pool ist nicht ONLINE: ' . $pool);
         }
         $inventory = [];
-        foreach (Exec::rows(self::ok($ssh, ['zfs', 'list', '-Hp', '-r', '-t', 'filesystem,volume', '-o', 'name,type,mounted,available', $pool]),
-            ['name', 'type', 'mounted', 'available']) as $row) {
+        // Empfang braucht nur einen importierten ONLINE-Pool; die Pool-Wurzel darf ungemountet sein (canmount=off, mountpoint=none, Schlüssel fehlt)
+        foreach (Exec::rows(self::ok($ssh, ['zfs', 'list', '-Hp', '-r', '-t', 'filesystem,volume', '-o', 'name,type,available', $pool]),
+            ['name', 'type', 'available']) as $row) {
             $inventory[$row['name']] = $row;
-        }
-        if (($inventory[$pool]['mounted'] ?? 'no') !== 'yes') {
-            throw new UserError('Ziel-Pool-Root ist nicht gemountet: ' . $pool);
         }
         $ancestor = $target;
         while (!isset($inventory[$ancestor])) {
@@ -175,26 +188,48 @@ final class Send
                 $token = $props['receive_resume_token']['value'] ?? '-';
                 $marker = self::marker($ssh, $dest);
                 $owner = self::hasOwner($props, $job, $source);
+                $fresh = false;
                 if ($token !== '-' && $token !== '') {
-                    $item['resume'] = self::resume($item, $token, (string)$job['id'], $marker);
-                    $pending = $item['resume']['snapshot'];
-                    if (!$owner && !self::validMarker($marker, $job, $item, $pending)) {
-                        throw new UserError('Fremder unvollständiger Empfang: ' . $dest);
-                    }
-                    if ($marker !== null && !self::validMarker($marker, $job, $item, $pending)) {
-                        throw new UserError('Empfangs-Metadaten gehören nicht zu diesem Stream: ' . $dest);
+                    $resume = self::resume($item, $token, (string)$job['id'], $marker);
+                    if (isset($resume['stale'])) {
+                        // Quell-Snapshot des Tokens gelöscht: nur ein nachweislich eigener Empfang wird verworfen
+                        $markerOwns = $marker !== null && ($marker['job'] ?? '') === (string)$job['id']
+                            && ($marker['source'] ?? '') === $source && ($marker['target'] ?? '') === $dest
+                            && ($marker['snapshot'] ?? '') === $resume['stale'] && ($marker['guid'] ?? '') === $resume['guid'];
+                        if (!$owner && !$markerOwns) {
+                            throw new UserError('Unvollständiger Empfang auf ' . $dest . ' ist nicht fortsetzbar (' . $resume['why']
+                                . ') und gehört nicht nachweislich diesem Job; manuell verwerfen: zfs receive -A ' . $dest);
+                        }
+                        $item['abort'] = $resume['why'];
+                        // Abgebrochener Erst-Empfang: -A entfernt das Ziel, danach folgt eine Vollübertragung
+                        $fresh = $destSnaps === [];
+                    } else {
+                        $item['resume'] = $resume;
+                        $pending = $item['resume']['snapshot'];
+                        if (!$owner && !self::validMarker($marker, $job, $item, $pending)) {
+                            throw new UserError('Fremder unvollständiger Empfang: ' . $dest);
+                        }
+                        if ($marker !== null && !self::validMarker($marker, $job, $item, $pending)) {
+                            throw new UserError('Empfangs-Metadaten gehören nicht zu diesem Stream: ' . $dest);
+                        }
                     }
                 } elseif (!$owner) {
                     throw new UserError('Vorhandenes Ziel gehört nicht ausdrücklich diesem Job und dieser Quelle: ' . $dest);
                 }
-                $item['base'] = self::common($snapshots, $destSnaps, (string)$job['id']);
-                if ($item['resume'] === null) {
+                $item['base'] = $fresh ? null : self::common($snapshots, $destSnaps, (string)$job['id']);
+                if ($item['resume'] === null && !$fresh) {
                     if ($item['base'] === null) {
                         throw new UserError('Vorhandenes Ziel ohne eigenen gemeinsamen GUID-Snapshot: ' . $dest);
                     }
                     $latest = $destSnaps ? $destSnaps[count($destSnaps) - 1] : null;
                     if (($latest['guid'] ?? null) !== $item['base']['guid']) {
-                        throw new UserError('Ziel enthält neuere oder fremde Snapshots; kein erzwungenes Rollback: ' . $dest);
+                        // z. B. fremder Zwischen-Snapshot aus früheren -I-Streams: GUID-gleich mit der Quelle und jünger als
+                        // die eigene Basis, dann ist er selbst eine gültige Basis für -i
+                        $shared = self::sharedAfter($snapshots, $latest, $item['base']);
+                        if ($shared === null) {
+                            throw new UserError('Ziel enthält neuere oder fremde Snapshots; kein erzwungenes Rollback: ' . $dest);
+                        }
+                        $item['base'] = $shared;
                     }
                     $baseName = substr($latest['name'], strpos($latest['name'], '@') + 1);
                     $written = self::properties($ssh, $dest, ['written@' . $baseName]);
@@ -274,17 +309,37 @@ final class Send
         return $common;
     }
 
+    /** Quell-Snapshot mit der GUID des neuesten Ziel-Snapshots, sofern jünger als die eigene gemeinsame Basis. */
+    private static function sharedAfter(array $source, ?array $latest, array $base): ?array
+    {
+        $baseIndex = null;
+        foreach ($source as $index => $snap) {
+            if ($snap['guid'] === $base['guid']) {
+                $baseIndex = $index;
+            }
+            if ($latest !== null && $baseIndex !== null && $index > $baseIndex && $snap['guid'] === $latest['guid']) {
+                return $snap;
+            }
+        }
+        return null;
+    }
+
     private static function resume(array $item, string $token, string $job, ?array $marker): array
     {
-        // OpenZFS prints decoded token fields to stderr on some releases.
+        // OpenZFS prints decoded token fields to stderr on some releases, also when the send itself fails.
         $decoded = Exec::run(['zfs', 'send', '-nvt', $token], 120);
-        if ($decoded['code'] !== 0) {
-            throw new UserError('Resume-Token ist auf der Quelle nicht fortsetzbar: ' . $decoded['err']);
-        }
         $text = $decoded['out'] . "\n" . $decoded['err'];
         if (!preg_match('~^\s*toname\s*=\s*(.*?)\s*$~m', $text, $name)
             || !preg_match('~^\s*toguid\s*=\s*(0x[0-9a-fA-F]+|[0-9]+)\s*$~m', $text, $guid)) {
-            throw new UserError('Resume-Token enthält keine eindeutige Quellidentität');
+            if (preg_match("~'([^']+@[^']+)' (?:used in the initial send no longer exists|is no longer the same snapshot)~", $decoded['err'], $gone)
+                && str_starts_with($gone[1], $item['source'] . '@')) {
+                return ['stale' => $gone[1], 'guid' => null, 'why' => 'Quell-Snapshot ' . $gone[1] . ' existiert nicht mehr'];
+            }
+            throw new UserError($decoded['code'] !== 0 ? 'Resume-Token ist auf der Quelle nicht fortsetzbar: ' . $decoded['err']
+                : 'Resume-Token enthält keine eindeutige Quellidentität');
+        }
+        if (!str_starts_with($name[1], $item['source'] . '@')) {
+            throw new UserError('Resume-Token gehört zu einer anderen Quelle: ' . $name[1]);
         }
         $snapshot = null;
         foreach ($item['snapshots'] as $candidate) {
@@ -292,9 +347,19 @@ final class Send
                 $snapshot = $candidate;
             }
         }
-        if ($snapshot === null || (!self::owned($snapshot, $job)
+        $fromGuid = preg_match('~^\s*fromguid\s*=\s*(0x[0-9a-fA-F]+|[0-9]+)\s*$~m', $text, $from) ? self::guid($from[1]) : '0';
+        $why = $snapshot === null ? 'Quell-Snapshot ' . $name[1] . ' existiert nicht mehr'
+            : ($fromGuid !== '0' && !in_array($fromGuid, array_column($item['snapshots'], 'guid'), true)
+                ? 'Basis-Snapshot des Streams existiert auf der Quelle nicht mehr' : null);
+        if ($why !== null) {
+            return ['stale' => $name[1], 'guid' => self::guid($guid[1]), 'why' => $why];
+        }
+        if ($decoded['code'] !== 0) {
+            throw new UserError('Resume-Token ist auf der Quelle nicht fortsetzbar: ' . $decoded['err']);
+        }
+        if ((!self::owned($snapshot, $job)
             && !self::validMarker($marker, ['id' => $job], $item, $snapshot))) {
-            throw new UserError('Resume-Token gehört zu einer anderen Quelle');
+            throw new UserError('Resume-Token gehört nicht zu einem eigenen Snapshot dieses Jobs: ' . $name[1]);
         }
         $base = null;
         if (preg_match('~^\s*fromguid\s*=\s*(0x[0-9a-fA-F]+|[0-9]+)\s*$~m', $text, $from) && self::guid($from[1]) !== '0') {
@@ -316,14 +381,18 @@ final class Send
         return ['token' => $token, 'snapshot' => $snapshot, 'base' => $base, 'marker' => $marker];
     }
 
+    /** Schätzung und Übertragung nutzen dieselben Flags: -c macht die -nP-Größe zur komprimierten Stream-Größe. */
     private static function sendCommand(array $item, string $snapshot, bool $estimate): array
     {
         $cmd = ['zfs', 'send', $estimate ? '-nP' : '-vP', '-p'];
         if ($item['encrypted']) {
-            $cmd[] = '-w';
+            $cmd[] = '-w'; // roh: Blöcke unverändert, schließt -L -e -c ein
+        } else {
+            array_push($cmd, '-L', '-e', '-c');
         }
+        // -i statt -I: fremde Zwischen-Snapshots (sanoid, manuell) landen nie unbereinigt auf dem Ziel
         if ($item['base'] !== null) {
-            array_push($cmd, '-I', $item['base']['name']);
+            array_push($cmd, '-i', $item['base']['name']);
         }
         $cmd[] = $snapshot;
         return $cmd;
@@ -412,26 +481,51 @@ final class Send
         }
         $pipeline .= ' | ' . Remote::quote(Remote::command($ssh, $receive));
         $pipeline .= '; status=$?; wait; exit "$status"';
-        $bytes = 0;
-        $measured = false;
-        $streamLog = static function (string $line) use ($log, &$bytes, &$measured): void {
-            if (preg_match('~^ZBG_BYTES=([0-9]+)$~', trim($line), $match)) {
-                $bytes = max($bytes, (int)$match[1]);
-                $measured = true;
-                $log('Übertragen: ' . $bytes . ' Bytes');
-            } else {
-                if (preg_match('~^\d{2}:\d{2}:\d{2}\s+([0-9]+)\s+~', $line, $match)) {
-                    $bytes = max($bytes, (int)$match[1]);
-                    $measured = true;
-                }
-                $log($line);
-            }
-        };
+        [$streamLog, $done] = self::progress($log, static fn(): float => microtime(true));
         $run = Exec::stream(['bash', '-o', 'pipefail', '-c', $pipeline], $streamLog, $cancel);
+        $stats = $done();
         if ($run['code'] !== 0) {
             throw new \RuntimeException('ZFS-Replikation fehlgeschlagen (' . $run['code'] . '): ' . $run['err']);
         }
-        return ['bytes' => $bytes, 'measured' => $measured];
+        return $stats;
+    }
+
+    /**
+     * zfs send -vP und pv melden jede Sekunde: höchstens eine Fortschrittszeile pro PROGRESS_INTERVAL im Job-Log,
+     * die letzte zurückgehaltene beim Abschluss. Andere Zeilen (Header, Fehler) immer sofort.
+     * @return array{0:\Closure(string):void,1:\Closure():array{bytes:int,measured:bool}}
+     */
+    private static function progress(callable $log, callable $clock): array
+    {
+        $bytes = 0;
+        $measured = false;
+        $last = $held = null;
+        $line = static function (string $line) use ($log, $clock, &$bytes, &$measured, &$last, &$held): void {
+            if (preg_match('~^ZBG_BYTES=([0-9]+)$~', trim($line), $match)) {
+                $line = 'Übertragen: ' . max($bytes, (int)$match[1]) . ' Bytes';
+            } elseif (!preg_match('~^\d{2}:\d{2}:\d{2}\s+([0-9]+)\s+~', $line, $match)) {
+                $log($line);
+                return;
+            }
+            $bytes = max($bytes, (int)$match[1]);
+            $measured = true;
+            $now = $clock();
+            if ($last === null || $now - $last >= self::PROGRESS_INTERVAL) {
+                $log($line);
+                $last = $now;
+                $held = null;
+            } else {
+                $held = $line;
+            }
+        };
+        $done = static function () use ($log, &$bytes, &$measured, &$held): array {
+            if ($held !== null) {
+                $log($held);
+                $held = null;
+            }
+            return ['bytes' => $bytes, 'measured' => $measured];
+        };
+        return [$line, $done];
     }
 
     private static function finish(array $job, array $item, array $wanted, callable $log): void
@@ -449,7 +543,7 @@ final class Send
             if ($snap['guid'] === $wanted['guid']) {
                 $found = true;
             }
-            // -I may carry foreign intermediate snapshots; never adopt those.
+            // Ältere -I-Streams konnten fremde Zwischen-Snapshots tragen; nie übernehmen.
             $name = substr($snap['name'], strpos($snap['name'], '@') + 1);
             if (isset($sourceGuids[$snap['guid']]) && Zfs::isOwn($name, (string)$job['id'])) {
                 self::ok($ssh, ['zfs', 'set', self::OWNER . '=' . $job['id'], $snap['name']]);
@@ -585,5 +679,10 @@ final class Send
     private static function ok(?array $ssh, array $cmd): string
     {
         return Exec::ok(Remote::command($ssh, $cmd), 120);
+    }
+
+    private static function run(?array $ssh, array $cmd): array
+    {
+        return Exec::run(Remote::command($ssh, $cmd), 120);
     }
 }

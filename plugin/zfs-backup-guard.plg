@@ -49,14 +49,6 @@
 - CSRF-Prüfung berücksichtigt das bereits von Unraid geprüfte Token, nachdem Unraid POST/Header bereinigt hat.
 </CHANGES>
 
-<!-- alte Pakete entfernen -->
-<FILE Run="/bin/bash">
-<INLINE>
-find &plgPATH; -maxdepth 1 -name '&name;-*.txz' ! -name '&pkg;' -delete 2>/dev/null
-true
-</INLINE>
-</FILE>
-
 <FILE Name="&plgPATH;/&pkg;" Run="upgradepkg --reinstall --install-new">
 <URL>&pkgURL;</URL>
 <MD5>&md5;</MD5>
@@ -67,6 +59,8 @@ true
 set -e
 chmod 755 &emhttp;/bin/zbg
 ln -sf &emhttp;/bin/zbg /usr/local/sbin/zbg
+# alte Pakete erst entfernen, wenn das neue geladen, geprüft und installiert ist
+find &plgPATH; -maxdepth 1 -name '&name;-*.txz' ! -name '&pkg;' -delete 2>/dev/null || true
 &emhttp;/bin/zbg schedule
 echo "ZFS Backup Guard &version; installiert"
 </INLINE>
@@ -76,7 +70,8 @@ echo "ZFS Backup Guard &version; installiert"
 <FILE Run="/bin/bash" Method="remove">
 <INLINE>
 set -e
-&emhttp;/bin/zbg cancel-all
+&emhttp;/bin/zbg cancel-all || true
+&emhttp;/bin/zbg array-started || true
 &emhttp;/bin/zbg schedule-remove
 removepkg &name;
 rm -f /usr/local/sbin/zbg

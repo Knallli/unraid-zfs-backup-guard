@@ -5,13 +5,15 @@ namespace ZBG;
 
 final class Versions
 {
+    /** Y-m-d_His (Ortszeit des Laufs), bei Kollision mit Suffix -2 … -99; Prüfung unabhängig von der Zeitzone. */
     public static function validName(string $name): bool
     {
-        if (!preg_match('/^\d{4}-\d{2}-\d{2}_\d{6}$/D', $name)) {
+        if (!preg_match('/^(\d{4}-\d{2}-\d{2}_\d{6})(?:-[2-9]|-[1-9]\d)?$/D', $name, $m)) {
             return false;
         }
-        $date = \DateTimeImmutable::createFromFormat('!Y-m-d_His', $name);
-        return $date !== false && $date->format('Y-m-d_His') === $name;
+        // UTC: eine Ortszeit in der Sommerzeit-Lücke (02:xx am Umstellungstag) bleibt gültig
+        $date = \DateTimeImmutable::createFromFormat('!Y-m-d_His', $m[1], new \DateTimeZone('UTC'));
+        return $date !== false && $date->format('Y-m-d_His') === $m[1];
     }
 
     public static function list(array $job): array
@@ -37,7 +39,7 @@ final class Versions
                 $result[] = ['name' => $name, 'time' => $manifest['time'], 'path' => $entry->getPathname()];
             }
         }
-        usort($result, static fn($a, $b) => $b['time'] <=> $a['time'] ?: strcmp($b['name'], $a['name']));
+        usort($result, static fn($a, $b) => $b['time'] <=> $a['time'] ?: strnatcmp($b['name'], $a['name']));
         return $result;
     }
 
@@ -78,10 +80,18 @@ final class Versions
             throw new UserError('Ungültiger Versionsabschluss');
         }
         $final = $base . '/' . $name;
-        if (file_exists($final) || is_link($final)) {
-            throw new UserError('Version existiert bereits');
+        // doppelte Ortszeit (Zeitumstellung) oder zwei Läufe in derselben Sekunde: Suffix statt Abbruch
+        for ($n = 2; file_exists($final) || is_link($final); $n++) {
+            if ($n > 99) {
+                throw new UserError('Version existiert bereits');
+            }
+            $final = $base . '/' . $name . '-' . $n;
         }
+        $name = basename($final);
         self::assertLatest($job);
+        if (is_file($stage . '/.zbg-stage.json') && !is_link($stage . '/.zbg-stage.json')) {
+            @unlink($stage . '/.zbg-stage.json');
+        }
         RunState::atomic($stage . '/.zbg-version.json', ['job' => $job['id'], 'name' => $name, 'time' => $time, 'complete' => true]);
         if (!rename($stage, $final)) {
             throw new \RuntimeException('Version kann nicht atomar abgeschlossen werden');

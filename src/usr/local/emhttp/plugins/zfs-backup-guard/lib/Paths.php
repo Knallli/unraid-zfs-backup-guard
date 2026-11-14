@@ -10,6 +10,9 @@ final class Paths
 {
     public const TARGET_ROOT = '/mnt/';
 
+    /** Nur für Tests: Verzeichnis, das statt /mnt nach Pool-/Disk-Ordnern durchsucht wird. */
+    public static string $mntRoot = '/mnt';
+
     public static function clean(string $p): string
     {
         if ($p === '' || $p[0] !== '/' || str_contains($p, "\0")) {
@@ -46,19 +49,86 @@ final class Paths
         return $p;
     }
 
-    /** Liegt $child (realpath) innerhalb von $root (realpath)? */
-    /** Pfad plus die realen Pool-/Disk-Pfade, hinter denen ein /mnt/user[0]/<share>-Pfad liegt. */
+    /**
+     * Pfad plus die realen Pool-/Disk-Pfade, hinter denen ein /mnt/user[0]/<share>-Pfad liegt
+     * (vorhandene Share-Ordner und laut Share-Konfiguration genutzte Pools, auf denen shfs ihn anlegen würde).
+     */
     public static function aliases(string $path): array
     {
         $out = [$path];
         if (preg_match('~^/mnt/user0?/([^/]+)(/.*)?$~', $path, $m)) {
-            foreach (glob('/mnt/*/' . addcslashes($m[1], '*?[]\\'), GLOB_ONLYDIR) ?: [] as $dir) {
+            $root = rtrim(self::$mntRoot, '/');
+            foreach (glob($root . '/*/' . addcslashes($m[1], '*?[]\\'), GLOB_ONLYDIR) ?: [] as $dir) {
+                $dir = '/mnt' . substr($dir, strlen($root));
                 if (!preg_match('~^/mnt/user0?/~', $dir . '/')) {
                     $out[] = $dir . ($m[2] ?? '');
                 }
             }
+            $share = self::shareInfo('/mnt/user/' . $m[1]);
+            if ($share && in_array($share['useCache'] ?? 'no', ['yes', 'only', 'prefer'], true)) {
+                foreach ([$share['pool'] ?? null, $share['pool2'] ?? null] as $pool) {
+                    if (is_string($pool) && preg_match('~^[A-Za-z0-9_.-]+$~D', $pool) && !in_array($pool, ['user', 'user0'], true)) {
+                        $out[] = '/mnt/' . $pool . '/' . $m[1] . ($m[2] ?? '');
+                    }
+                }
+            }
         }
-        return $out;
+        return array_values(array_unique($out));
+    }
+
+    /** Überlappen sich zwei Pfade (gleich, innerhalb, oberhalb) – auch über /mnt/user-Aliase? */
+    public static function overlap(string $a, string $b): bool
+    {
+        foreach (self::aliases($a) as $x) {
+            foreach (self::aliases($b) as $y) {
+                if (self::within($x, $y) || self::within($y, $x)) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Fehlermeldung, wenn das rsync-Ziel des Jobs gleich, innerhalb oder oberhalb des rsync-Ziels eines
+     * anderen Jobs auf demselben Host liegt (sonst würde --delete des einen die Daten des anderen löschen).
+     */
+    public static function jobTargetConflict(array $job, array $otherJobs): ?string
+    {
+        $host = static function (array $j): string {
+            $ssh = $j['target']['ssh'] ?? null;
+            return is_array($ssh) && !empty($ssh['host'])
+                ? strtolower(trim((string)$ssh['host'], '[]')) . ':' . (int)($ssh['port'] ?? 22) : '';
+        };
+        $path = static function (array $j): ?string {
+            if (($j['method'] ?? 'rsync') !== 'rsync' || !is_string($j['target']['path'] ?? null) || $j['target']['path'] === '') {
+                return null;
+            }
+            try {
+                return self::clean(trim($j['target']['path']));
+            } catch (UserError) {
+                return null;
+            }
+        };
+        $own = $path($job);
+        if ($own === null) {
+            return null;
+        }
+        foreach ($otherJobs as $other) {
+            if (!is_array($other) || (isset($job['id'], $other['id']) && $other['id'] === $job['id'])) {
+                continue;
+            }
+            $theirs = $path($other);
+            if ($theirs === null || $host($other) !== $host($job)) {
+                continue;
+            }
+            $hit = $host($job) === '' ? self::overlap($own, $theirs) : (self::within($own, $theirs) || self::within($theirs, $own));
+            if ($hit) {
+                $name = (string)($other['name'] ?? $other['id'] ?? '?');
+                return "Ziel überschneidet sich mit dem Ziel von Job „{$name}“ ($theirs): Job-Ziele dürfen weder gleich sein noch ineinander liegen";
+            }
+        }
+        return null;
     }
 
     public static function within(string $root, string $child): bool
@@ -106,7 +176,7 @@ final class Paths
         if ($sourceDataset) {
             $ds = Zfs::dataset($sourceDataset);
             $srcPool = $ds['pool'];
-            $inside = $ds['path'] !== null && self::within($ds['path'], $real);
+            $inside = $ds['path'] !== null && (self::within($ds['path'], $real) || self::overlap($path, $ds['path']));
             $checks[] = ['ok' => !$inside, 'label' => $inside ? 'Ziel liegt in der Quelle!' : 'Ziel liegt außerhalb der Quelle'];
             // Gleicher Pool? Direkt (/mnt/<pool>/…, ZFS-Mount) oder über einen Share, der den Pool nutzt
             $samePool = false;

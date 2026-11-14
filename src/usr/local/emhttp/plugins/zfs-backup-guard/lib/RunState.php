@@ -28,7 +28,8 @@ final class RunState
     {
         self::assertId($id);
         self::ensureDirectory(self::dir());
-        $handle = @fopen(self::dir() . '/' . $id . '.lock', 'c');
+        // "e" = close-on-exec: Kindprozesse (Hooks, Hintergrundprozesse) erben die Sperre nicht
+        $handle = @fopen(self::dir() . '/' . $id . '.lock', 'ce');
         if ($handle === false) {
             throw new \RuntimeException('Job-Sperre kann nicht geöffnet werden');
         }
@@ -139,6 +140,25 @@ final class RunState
     public static function clearCancel(string $id): void
     {
         @unlink(self::dir() . '/' . $id . '.cancel');
+    }
+
+    /** Array-Stopp: cancel-all setzt die Markierung, das Ereignis "started" entfernt sie. */
+    public static function stopping(): bool
+    {
+        return is_file(self::dir() . '/stopping');
+    }
+
+    public static function setStopping(bool $on): void
+    {
+        $file = self::dir() . '/stopping';
+        if ($on) {
+            self::ensureDirectory(self::dir());
+            if (@file_put_contents($file, date('c') . "\n") === false) {
+                throw new \RuntimeException('Array-Stopp-Markierung kann nicht geschrieben werden');
+            }
+        } else {
+            @unlink($file);
+        }
     }
 
     public static function logPath(string $id, string $runId): string

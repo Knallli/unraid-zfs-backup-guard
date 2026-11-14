@@ -1,0 +1,3 @@
+#!/bin/sh
+# Unraid (emhttp_event) ruft <Plugin>/event/<Ereignis> auf: neue Läufe sperren, laufende abbrechen, Container wiederherstellen.
+exec /usr/bin/php /usr/local/emhttp/plugins/zfs-backup-guard/bin/zbg cancel-all

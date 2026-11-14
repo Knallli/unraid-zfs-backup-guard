@@ -38,10 +38,10 @@
   let ed = null;
   Z.editorState = () => ed;
 
-  Z.openEditor = async function (job, originalId) {
+  Z.openEditor = async function (job, originalId, revision) {
     const base = DEFAULT_JOB();
     const j = job ? deepMerge(base, JSON.parse(JSON.stringify(job))) : base;
-    ed = { job: j, originalId, step: 0, visited: new Set([0]), idTouched: !!originalId, check: null, containers: null, ctFilter: '', showJson: false, advanced: !!(j.hooks.pre || j.hooks.post) };
+    ed = { job: j, originalId, revision: originalId ? revision : undefined, step: 0, visited: new Set([0]), idTouched: !!originalId, check: null, containers: null, ctFilter: '', showJson: false, advanced: !!(j.hooks.pre || j.hooks.post) };
     ed.layer = Z.modal({
       kind: 'sheet',
       size: 'xl',
@@ -64,7 +64,7 @@
     const top = Z.topLayer();
     if (top && top.el.querySelector('.zbg-menu')) Z.closeLayer(top);
     const j = Z.findJob(el.dataset.id);
-    if (j) Z.openEditor(j.job, j.job.id);
+    if (j) Z.openEditor(j.job, j.job.id, j.revision);
   };
 
   function deepMerge(a, b) {
@@ -105,6 +105,13 @@
     Z.$('[data-region="edSteps"]', ed.layer.el).innerHTML = stepsNav();
     Z.$('[data-region="edFoot"]', ed.layer.el).innerHTML = footer();
     AFTER[STEPS[ed.step].key]?.();
+  }
+  function renderStepKeepFocus() {
+    const f = document.activeElement;
+    const bind = f && f.dataset ? f.dataset.bind : null;
+    renderStep();
+    const el = bind ? Z.$(`[data-bind="${bind}"]`, ed.layer.el) : null;
+    if (el) el.focus();
   }
   function goto(i) {
     ed.step = Z.clamp(i, 0, STEPS.length - 1);
@@ -461,6 +468,7 @@
     const s = ed.job.schedule;
     if (!Z.cron.valid(s)) return `<div class="cron-prev bad">${icon('x')}Ungültiger Ausdruck</div>`;
     const next = Z.cron.nextN(s, 4);
+    if (!next.length) return `<div class="zbg-callout tone-warn">${icon('alert')}<div><b>Dieser Zeitplan wird nie ausgeführt</b> (z. B. 31. Februar). Tag und Monat prüfen, sonst läuft der Job nur manuell.</div></div>`;
     return `<div class="cron-prev"><div class="cp-desc">${icon('check')}<b>${esc(Z.cron.describe(s))}</b></div>
       <div class="cp-next">${next.map((t, i) => `<span class="${i ? '' : 'first'}">${i ? '' : 'Nächster Lauf: '}${esc(fmt.when(t))}</span>`).join('')}</div></div>`;
   }
@@ -712,7 +720,7 @@
         ${j.consistency.mode !== 'crash' && j.consistency.containers.length ? `<li>${j.consistency.mode === 'pause' ? 'Pausieren' : 'Stoppen'}: ${esc(j.consistency.containers.join(', '))}</li>` : ''}
         <li>Snapshot <code>${esc(j.source.dataset)}@zbg_${esc(j.id)}_JJJJMMTT-HHMMSS</code>${j.source.recursive ? ' (rekursiv, atomar)' : ''}</li>
         ${j.consistency.mode !== 'crash' && j.consistency.containers.length ? '<li>Container sofort wieder starten</li>' : ''}
-        <li>${j.method === 'zfs' ? 'zfs send -I → receive -s -u' : j.target.mode === 'versioned' ? 'rsync --link-dest in neuen Versionsordner' : 'rsync --delete in den Spiegel'}</li>
+        <li>${j.method === 'zfs' ? 'zfs send -i → receive -s -u' : j.target.mode === 'versioned' ? 'rsync --link-dest in neuen Versionsordner' : 'rsync --delete in den Spiegel'}</li>
         ${j.method === 'rsync' && j.system ? '<li>Systemdisk: Partitionen, EFI, LUKS-Header nach <code>.zbg-system/</code></li>' : ''}
         ${j.method === 'rsync' && j.verify ? '<li>Prüfsummen mit dem Quell-Snapshot vergleichen</li>' : ''}
         <li>${cleanup ? 'Nur bei Erfolg: alle eigenen Quell-Snapshots kopierter Datasets entfernen (außer explizit geschützten); Snapshot-only-Datasets nach Aufbewahrungsregeln aufräumen, neuester bleibt' : 'Aufräumen nach Aufbewahrungsregeln (nur eigene Snapshots, nur bei Erfolg)'}</li>
@@ -729,7 +737,7 @@
     btns.forEach((b) => (b.disabled = true));
     const wasEdit = !!ed.originalId;
     try {
-      const saved = await Z.api('jobs.save', { job: ed.job, originalId: ed.originalId });
+      const saved = await Z.api('jobs.save', { job: ed.job, originalId: ed.originalId, revision: ed.revision });
       const dry = el.dataset.dry;
       Z.closeLayer(ed.layer);
       Z.toast(wasEdit ? 'Job gespeichert' : `Job „${saved.name}“ angelegt`);

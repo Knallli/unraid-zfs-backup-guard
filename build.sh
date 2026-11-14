@@ -12,12 +12,12 @@ STAGE=$(mktemp -d)
 trap 'rm -rf "$STAGE"' EXIT
 cp -r src/. "$STAGE/"
 # Zeilenenden normalisieren (Windows-Checkout), Rechte setzen
-find "$STAGE" -type f \( -name '*.php' -o -name '*.page' -o -name '*.js' -o -name '*.css' -o -name zbg \) -exec sed -i 's/\r$//' {} +
+find "$STAGE" -type f \( -name '*.php' -o -name '*.page' -o -name '*.js' -o -name '*.css' -o -name zbg -o -path '*/event/*' \) -exec sed -i 's/\r$//' {} +
 find "$STAGE" -type d -exec chmod 755 {} +
 find "$STAGE" -type f -exec chmod 644 {} +
 chmod 755 "$STAGE/usr/local/emhttp/plugins/$NAME/bin/zbg"
-if [ -d "$STAGE/usr/local/emhttp/plugins/$NAME/events" ]; then
-    find "$STAGE/usr/local/emhttp/plugins/$NAME/events" -type f -exec chmod 755 {} +
+if [ -d "$STAGE/usr/local/emhttp/plugins/$NAME/event" ]; then
+    find "$STAGE/usr/local/emhttp/plugins/$NAME/event" -type f -exec chmod 755 {} +
 fi
 
 mkdir -p dist

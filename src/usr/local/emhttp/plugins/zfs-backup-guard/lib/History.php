@@ -27,7 +27,7 @@ final class History
         RunState::assertId($id);
         RunState::ensureDirectory(self::dir());
         $file = self::dir() . '/' . $id . '.jsonl';
-        $lock = @fopen($file . '.lock', 'c');
+        $lock = @fopen($file . '.lock', 'ce');
         if ($lock === false || !flock($lock, LOCK_EX)) {
             throw new \RuntimeException('Verlaufsperre fehlgeschlagen');
         }
@@ -47,9 +47,31 @@ final class History
                 @unlink($tmp);
                 throw new \RuntimeException('Verlauf kann nicht gespeichert werden');
             }
+            foreach (array_slice($lines, 0, max(0, count($lines) - $limit)) as $line) {
+                self::removeLog($id, json_decode($line, true));
+            }
         } finally {
             flock($lock, LOCK_UN);
             fclose($lock);
+        }
+    }
+
+    /** Lauf-Log eines aus dem Verlauf gefallenen Laufs löschen (gespeicherter und aktueller Pfad). */
+    private static function removeLog(string $id, mixed $record): void
+    {
+        $run = is_array($record) ? (string)($record['runId'] ?? '') : '';
+        if (!preg_match('/^\d{8}-\d{6}-[a-f0-9]{8}$/D', $run)) {
+            return;
+        }
+        $name = $id . '-' . $run . '.log';
+        $paths = [RunState::logPath($id, $run)];
+        if (is_string($record['log'] ?? null) && basename($record['log']) === $name && basename(dirname($record['log'])) === 'logs') {
+            $paths[] = $record['log'];
+        }
+        foreach (array_unique($paths) as $path) {
+            if (is_file($path) && !is_link($path)) {
+                @unlink($path);
+            }
         }
     }
 

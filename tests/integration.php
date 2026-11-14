@@ -615,7 +615,13 @@ try {
     Exec::run(['zfs', 'set', 'readonly=off', $target]);
     foreach (array_reverse($created) as $dataset) {
         if (!str_starts_with($dataset, $pool . '/zbg-integration-') || !str_ends_with($dataset, $token)) { continue; }
-        Exec::run(['zfs', 'destroy', '-r', $dataset], 120);
+        // Kurz belegte Datasets (gerade beendete Kindprozesse) erneut versuchen, Fehler melden.
+        for ($attempt = 1; ; $attempt++) {
+            $destroyed = Exec::run(['zfs', 'destroy', '-r', $dataset], 120);
+            if ($destroyed['code'] === 0 || Exec::run(['zfs', 'list', '-H', '-o', 'name', $dataset])['code'] !== 0) { break; }
+            if ($attempt >= 10) { fwrite(STDERR, 'Dataset cleanup: ' . $dataset . ': ' . trim($destroyed['err'] ?? '') . "\n"); break; }
+            sleep(3);
+        }
     }
     foreach (array_reverse($mountpoints) as $path) {
         if (str_contains(basename($path), $token) && is_dir($path) && !is_link($path)) { @rmdir($path); }

@@ -283,8 +283,10 @@
         return clone(r.log || []);
       }
       case 'settings.get':
-      case 'settings.save':
-        return { logDir: '/mnt/cache/system/zfs-backup-guard', globalLock: true, historyLimit: 500, ...(p.settings || {}) };
+      case 'settings.save': {
+        const s = { logDir: '/mnt/cache/system/zfs-backup-guard', globalLock: true, historyLimit: 500, ...(p.settings || {}) };
+        return { ...s, activeLogDir: s.logDir, logFallback: false };
+      }
       case 'target.check': {
         const mounted = p.path.startsWith('/mnt/user/') || p.path.startsWith('/mnt/disk');
         const inside = p.source && p.path.startsWith('/mnt/' + p.source);

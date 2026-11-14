@@ -1,0 +1,3 @@
+#!/bin/sh
+# Dienste nach Einstellungsänderung oder Array-Start neu gestartet: Sperre aus stopping_svcs aufheben.
+exec /usr/bin/php /usr/local/emhttp/plugins/zfs-backup-guard/bin/zbg array-started

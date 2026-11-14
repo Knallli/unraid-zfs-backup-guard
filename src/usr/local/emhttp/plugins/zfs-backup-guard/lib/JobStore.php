@@ -30,7 +30,7 @@ final class JobStore
         if (!is_dir($dir) && !mkdir($dir, 0700, true) && !is_dir($dir)) {
             throw new \RuntimeException("Kann $dir nicht anlegen");
         }
-        $lock = fopen(self::file('.config.lock'), 'c+b');
+        $lock = fopen(self::file('.config.lock'), 'c+be');
         if ($lock === false) {
             throw new \RuntimeException('Konfigurationssperre kann nicht geöffnet werden');
         }
@@ -165,19 +165,38 @@ final class JobStore
         throw new UserError("Job nicht gefunden: $id");
     }
 
-    /** $originalId identifies the previous ID when editing or renaming a job. */
-    public static function save(array $input, ?string $originalId = null): array
+    /** Optimistic concurrency token of a stored job (editor sends it back with jobs.save). */
+    public static function revision(array $job): string
+    {
+        return substr(hash('sha256', json_encode($job, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR)), 0, 16);
+    }
+
+    /** $originalId identifies the previous ID when editing a job; $revision (optional) rejects stale editor saves. */
+    public static function save(array $input, ?string $originalId = null, ?string $revision = null): array
     {
         $job = Job::normalize($input);
         if ($originalId !== null && $originalId !== $job['id']) {
             throw new UserError('Die Job-ID kann nicht geändert werden; Snapshots und Ziel gehören zur ID. Neuen Job anlegen.');
         }
         return self::mutateJobs(array_values(array_unique(array_filter([$originalId, $job['id']], static fn($id) => $id !== null))),
-            static function (array &$jobs) use ($job, $originalId): array {
+            static function (array &$jobs) use ($job, $originalId, $revision): array {
+                if ($revision !== null && $originalId !== null) {
+                    $stored = array_values(array_filter($jobs, static fn($existing) => $existing['id'] === $originalId))[0] ?? null;
+                    if ($stored === null) {
+                        throw new UserError('Job wurde inzwischen gelöscht – Seite neu laden');
+                    }
+                    if (!hash_equals(self::revision($stored), $revision)) {
+                        throw new UserError('Job wurde inzwischen geändert (anderer Tab oder CLI) – Seite neu laden und Änderungen erneut vornehmen');
+                    }
+                }
                 foreach ($jobs as $existing) {
                     if ($existing['id'] === $job['id'] && $existing['id'] !== $originalId) {
                         throw new UserError("Ein Job mit der ID {$job['id']} existiert bereits");
                     }
+                }
+                $conflict = Paths::jobTargetConflict($job, $jobs);
+                if ($conflict !== null) {
+                    throw new UserError($conflict);
                 }
                 foreach ($jobs as $i => $existing) {
                     if ($originalId !== null && $existing['id'] === $originalId) {
@@ -232,7 +251,9 @@ final class JobStore
             foreach ($jobs as $i => $job) {
                 if ($job['id'] === $id) {
                     $job['enabled'] = $on;
-                    $jobs[$i] = Job::normalize($job);
+                    // Nur das Flag umschalten: Pausieren darf nicht an Systemprüfungen scheitern (Pool/Dataset weg),
+                    // sonst feuert Cron weiter. Der gespeicherte Datensatz wurde beim Speichern bereits validiert.
+                    $jobs[$i] = $job;
                     return $jobs[$i];
                 }
             }
@@ -301,7 +322,8 @@ final class JobStore
     public static function saveSettings(array $in): array
     {
         return self::synchronized(static function () use ($in): array {
-            $settings = self::settings();
+            $previous = self::settings();
+            $settings = $previous;
             if (isset($in['logDir'])) {
                 $settings['logDir'] = Paths::clean((string)$in['logDir']);
                 if (!str_starts_with($settings['logDir'], '/mnt/') && !str_starts_with($settings['logDir'], '/var/log/')) {
@@ -314,8 +336,138 @@ final class JobStore
             if (isset($in['historyLimit'])) {
                 $settings['historyLimit'] = max(50, min(5000, (int)$in['historyLimit']));
             }
-            self::writeJson('settings.json', $settings);
+            if ($settings['logDir'] === Paths::clean((string)$previous['logDir'])) {
+                self::writeJson('settings.json', $settings);
+                return $settings;
+            }
+            // Verlauf und Logs ziehen mit um; sonst zeigen alle Jobs „nie gelaufen“ und die Altersprüfung alarmiert.
+            $locks = [];
+            try {
+                foreach (self::all() as $job) {
+                    try {
+                        $locks[] = RunState::lockJob($job['id'], true);
+                    } catch (UserError) {
+                        throw new UserError('Log-Verzeichnis kann nicht geändert werden, während ein Job läuft');
+                    }
+                    if (RunState::active($job['id'])) {
+                        throw new UserError('Log-Verzeichnis kann nicht geändert werden, während ein Job läuft');
+                    }
+                }
+                $from = dirname(History::dir());
+                self::writeJson('settings.json', $settings);
+                try {
+                    $to = dirname(History::dir());
+                    if ($to !== $settings['logDir']) {
+                        throw new UserError("Log-Verzeichnis {$settings['logDir']} ist nicht erreichbar oder nicht beschreibbar (Pool/Array gestartet?)");
+                    }
+                    if ($from !== $to) {
+                        self::moveLogData($from, $to);
+                    }
+                } catch (\Throwable $failure) {
+                    self::writeJson('settings.json', $previous);
+                    throw $failure;
+                }
+            } finally {
+                foreach (array_reverse($locks) as $lock) {
+                    flock($lock, LOCK_UN);
+                    fclose($lock);
+                }
+            }
             return $settings;
         });
+    }
+
+    /** Verschiebt history/ und logs/ ins neue Log-Verzeichnis; belegte Ziele werden nie zusammengeführt. */
+    private static function moveLogData(string $from, string $to): void
+    {
+        $moves = [];
+        foreach (['history', 'logs'] as $sub) {
+            $src = "$from/$sub";
+            $dst = "$to/$sub";
+            if (!is_dir($src) || is_link($src) || self::emptyDir($src)) {
+                continue;
+            }
+            if (Paths::within($src, $dst) || Paths::within($dst, $src)) {
+                throw new UserError('Neues Log-Verzeichnis darf nicht im alten Verlaufs-/Log-Ordner liegen (oder umgekehrt)');
+            }
+            if (file_exists($dst) || is_link($dst)) {
+                if (!is_dir($dst) || is_link($dst) || !self::emptyDir($dst)) {
+                    throw new UserError("Im neuen Log-Verzeichnis existiert bereits $dst mit Inhalt – leeren oder anderes Verzeichnis wählen");
+                }
+            }
+            $moves[] = [$src, $dst];
+        }
+        $done = [];
+        try {
+            foreach ($moves as [$src, $dst]) {
+                self::moveTree($src, $dst);
+                $done[] = [$src, $dst];
+            }
+        } catch (\Throwable $failure) {
+            foreach (array_reverse($done) as [$src, $dst]) {
+                try {
+                    self::moveTree($dst, $src);
+                } catch (\Throwable) {
+                }
+            }
+            throw new \RuntimeException('Verlauf/Logs konnten nicht verschoben werden: ' . $failure->getMessage(), 0, $failure);
+        }
+    }
+
+    private static function emptyDir(string $dir): bool
+    {
+        return (new \FilesystemIterator($dir))->valid() === false;
+    }
+
+    private static function moveTree(string $src, string $dst): void
+    {
+        RunState::ensureDirectory(dirname($dst));
+        if (is_dir($dst) && !is_link($dst) && !rmdir($dst)) {
+            throw new \RuntimeException("Leeres Ziel $dst kann nicht ersetzt werden");
+        }
+        if (@rename($src, $dst)) {
+            return;
+        }
+        // Anderes Dateisystem: erst vollständig kopieren, dann Quelle entfernen.
+        try {
+            self::copyTree($src, $dst);
+        } catch (\Throwable $failure) {
+            self::removeTree($dst);
+            throw $failure;
+        }
+        self::removeTree($src);
+    }
+
+    private static function copyTree(string $src, string $dst): void
+    {
+        if (!@mkdir($dst, 0700) && !is_dir($dst)) {
+            throw new \RuntimeException("Kann $dst nicht anlegen");
+        }
+        foreach (new \FilesystemIterator($src, \FilesystemIterator::SKIP_DOTS) as $entry) {
+            $target = $dst . '/' . $entry->getFilename();
+            if ($entry->isLink()) {
+                continue;
+            }
+            if ($entry->isDir()) {
+                self::copyTree($entry->getPathname(), $target);
+            } elseif (!@copy($entry->getPathname(), $target)) {
+                throw new \RuntimeException("Kann {$entry->getPathname()} nicht kopieren");
+            }
+        }
+    }
+
+    private static function removeTree(string $path): void
+    {
+        if (is_link($path) || is_file($path)) {
+            @unlink($path);
+            return;
+        }
+        if (!is_dir($path)) {
+            return;
+        }
+        foreach (new \FilesystemIterator($path, \FilesystemIterator::SKIP_DOTS) as $entry) {
+            self::removeTree($entry->getPathname());
+        }
+        @rmdir($path);
     }
 }

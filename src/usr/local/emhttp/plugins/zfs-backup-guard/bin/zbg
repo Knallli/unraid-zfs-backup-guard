@@ -65,7 +65,12 @@ try {
             zbg_json(Runner::cancel(zbg_arg(2, 'Job-ID')));
             break;
         case 'cancel-all':
-            Runner::cancelAll();
+            foreach (Runner::cancelAll() as $warning) {
+                fwrite(STDERR, 'Warnung: ' . $warning . "\n");
+            }
+            break;
+        case 'array-started':
+            Runner::arrayStarted();
             break;
         case 'log':
             zbg_json(Runner::log(zbg_arg(2, 'Job-ID'), $argv[3] ?? null));
@@ -113,7 +118,7 @@ try {
                 "  zbg import [script-name]                 Erkennen / deaktiviert importieren\n",
                 "  zbg run <id> [--dry-run] [--verify]       Im Vordergrund ausführen\n",
                 "  zbg start <id> [--dry-run] [--verify]     Im Hintergrund starten\n",
-                "  zbg status [id] | cancel <id> | cancel-all\n",
+                "  zbg status [id] | cancel <id> | cancel-all | array-started\n",
                 "  zbg log <id> [run-id] | check-age | schedule\n",
                 "  zbg versions <id>\n",
                 "  zbg restore <dataset> <snapshot> <path> [new-target]\n",
@@ -127,5 +132,12 @@ try {
     }
 } catch (Throwable $e) {
     fwrite(STDERR, 'Fehler: ' . $e->getMessage() . "\n");
+    if (in_array('--scheduled', $argv, true)) {
+        // cron verwirft stderr: Fehler geplanter Läufe zusätzlich ins Syslog
+        try {
+            ZBG\Exec::run(['logger', '-t', 'zfs-backup-guard', 'Geplanter Lauf ' . ($argv[2] ?? '') . ': ' . $e->getMessage()], 10);
+        } catch (Throwable) {
+        }
+    }
     exit(1);
 }

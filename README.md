@@ -45,13 +45,13 @@ SSH-Hosts können Hostnamen, IPv4-Adressen oder ungeklammerte IPv6-Adressen wie 
 
 Der Probelauf führt Vorprüfungen aus und zeigt den Plan, erzeugt aber keine Snapshots, startet keine Hooks, verändert keine Container oder Ziele und räumt nichts auf. Er zählt nicht als erfolgreiches Backup.
 
-Job-Sperren verhindern Doppelstarts; standardmäßig serialisiert zusätzlich eine globale I/O-Sperre die Läufe. Die Oberfläche bietet Live-Status, Logs und Abbruch. Abbruch sowie das Unraid-Event `stopping_svcs` stoppen laufende Unterprozesse und stellen Containerzustände wieder her. Unvollständige Backups und ihre Snapshots bleiben zur Fehleranalyse/Fortsetzung erhalten.
+Job-Sperren verhindern Doppelstarts; standardmäßig serialisiert zusätzlich eine globale I/O-Sperre die Läufe. Die Oberfläche bietet Live-Status, Logs und Abbruch. Abbruch sowie das Unraid-Event `stopping_svcs` stoppen laufende Unterprozesse und stellen Containerzustände wieder her; bis zum nächsten Array-Start (`started`/`svcs_restarted`) starten keine neuen Läufe. Die globale I/O-Sperre wartet höchstens 6 Stunden. Abgebrochene versionierte Läufe hinterlassen markierte Zwischenordner, die der nächste Lauf desselben Jobs entfernt; ihre Snapshots bleiben zur Fehleranalyse/Fortsetzung erhalten. Snapshots mit Klonen oder Holds werden bei der Retention mit Warnung übersprungen. Job-Ziele dürfen weder gleich sein noch ineinander liegen, auch nicht über `/mnt/user`-Aliase.
 
 ## Zeitplanung und Benachrichtigungen
 
 Aktivierte Jobs werden über `/boot/config/plugins/zfs-backup-guard/zfs-backup-guard.cron` und Unraids `update_cron` eingeplant. Speichern, Pausieren und Löschen aktualisieren die Cron-Datei. Ein stündlicher Alterscheck warnt bei Überschreitung des eingestellten maximalen Backup-Alters.
 
-Unraid-Benachrichtigungen: alle Ereignisse, nur Fehler oder keine. Optional lässt sich eine Healthchecks-URL für Start, Erfolg und Fehler hinterlegen. Vor-/Nach-Hooks müssen vorhandene Skripte sein; sie laufen mit den Rechten des Plugins (root) und müssen vertrauenswürdig sein.
+Unraid-Benachrichtigungen: alle Ereignisse, nur Fehler oder keine. Optional lässt sich eine Healthchecks-URL für Start, Erfolg und Fehler hinterlegen. Vor-/Nach-Hooks müssen vorhandene Skripte sein; sie laufen mit den Rechten des Plugins (root), müssen root gehören, dürfen für Gruppe/Andere nicht schreibbar sein und werden nach einer Stunde abgebrochen. Fehler beim Healthcheck-Ping erzeugen nur eine Warnung im Log, das Backup selbst gilt weiter als erfolgreich. Die Altersüberwachung meldet jeden Zustand nur einmal.
 
 ## Wiederherstellung
 
@@ -101,7 +101,7 @@ Manuelle Läufe sind auch für deaktivierte Jobs erlaubt. Cron-Läufe berücksic
 
 Konfiguration: `/boot/config/plugins/zfs-backup-guard/jobs.json` und `settings.json`, atomar und gegen konkurrierende Änderungen geschützt. Aktive Jobs können nicht umbenannt oder gelöscht werden.
 
-Verlauf/Logs liegen standardmäßig unter `/mnt/cache/system/zfs-backup-guard/`, bei nicht verfügbarem Speicher unter `/var/log/zfs-backup-guard/`. Der Verlauf wird auf das konfigurierte Limit begrenzt (Standard: 500 pro Job). Laufzustände und Sperren liegen im RAM unter `/var/run/zfs-backup-guard/`.
+Verlauf/Logs liegen standardmäßig unter `/mnt/cache/system/zfs-backup-guard/`, bei nicht verfügbarem Speicher unter `/var/log/zfs-backup-guard/`. Der Verlauf wird auf das konfigurierte Limit begrenzt (Standard: 500 pro Job); Logs entfernter Läufe werden mitgelöscht, Fortschrittszeilen gedrosselt. Beim Ändern des Log-Verzeichnisses werden Verlauf und Logs umgezogen. Die Einstellungen zeigen das tatsächlich genutzte Verzeichnis und warnen beim RAM-Ausweichpfad. Laufzustände und Sperren liegen im RAM unter `/var/run/zfs-backup-guard/`.
 
 Deinstallation bricht Läufe ab und entfernt Cron-Einträge und Programmdateien. Konfiguration, Backups, Snapshots und bewusst angelegte Klone bleiben erhalten. Klone vorher in der Oberfläche entfernen, falls sie nicht benötigt werden.
 
